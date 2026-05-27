@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/candles", tags=["Candles"])
 
 @router.get("/")
 async def list_candles(
-    asset: str = Query("EURUSD_otc"),
+    asset: str = Query("BTCUSD_otc"),
     limit: int = Query(100, le=1000),
     db: AsyncSession = Depends(get_db),
 ):
@@ -31,7 +31,7 @@ async def list_candles(
 
 @router.get("/latest")
 async def latest_candle(
-    asset: str = Query("EURUSD_otc"),
+    asset: str = Query("BTCUSD_otc"),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -45,7 +45,7 @@ async def latest_candle(
 
 @router.get("/stats")
 async def candle_stats(
-    asset: str = Query("EURUSD_otc"),
+    asset: str = Query("BTCUSD_otc"),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(Candle).where(Candle.asset == asset))

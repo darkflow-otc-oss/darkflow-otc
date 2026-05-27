@@ -22,7 +22,7 @@ export default function LiveFeed() {
     const raw = data as Record<string, unknown>;
     const tick: TickItem = {
       ts: (raw.ts ?? raw.timestamp ?? new Date().toISOString()) as string,
-      asset: (raw.asset ?? "EURUSD_otc") as string,
+      asset: (raw.asset ?? "BTCUSD_otc") as string,
       price: (raw.price ?? raw.close ?? raw.bid ?? 0) as number,
       volume: (raw.volume ?? 1) as number,
     };

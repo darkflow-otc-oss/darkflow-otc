@@ -33,7 +33,7 @@ def get_pipeline(asset: str) -> PatternPipeline:
 
 
 class CandleInput(BaseModel):
-    asset: str = "EURUSD_otc"
+    asset: str = "BTCUSD_otc"
     candles: list[dict]
 
 
@@ -84,7 +84,7 @@ async def record_outcome(
 
 
 @router.get("/stats")
-async def pattern_stats(asset: str = "EURUSD_otc"):
+async def pattern_stats(asset: str = "BTCUSD_otc"):
     """Retorna estatísticas acumuladas do pipeline."""
     pipeline = get_pipeline(asset)
     return pipeline.stats()
@@ -92,7 +92,7 @@ async def pattern_stats(asset: str = "EURUSD_otc"):
 
 @router.get("/probability")
 async def get_probability(
-    asset: str = "EURUSD_otc",
+    asset: str = "BTCUSD_otc",
     pattern_type: str = "liquidity_hunt",
     signal: str = "CALL",
 ):
@@ -103,7 +103,7 @@ async def get_probability(
 
 @router.get("/similar")
 async def get_similar_patterns(
-    asset: str = Query("EURUSD_otc", description="Asset symbol"),
+    asset: str = Query("BTCUSD_otc", description="Asset symbol"),
     limit: int = Query(5, ge=1, le=50, description="Max results"),
 ):
     """Retorna padrões similares do ChromaDB para um ativo."""
@@ -136,7 +136,7 @@ async def get_similar_patterns(
 
 @router.get("/detect")
 async def get_latest_detection(
-    asset: str = Query("EURUSD_otc", description="Asset symbol"),
+    asset: str = Query("BTCUSD_otc", description="Asset symbol"),
 ):
     """Retorna a detecção mais recente ou status de espera."""
     pipeline = get_pipeline(asset)

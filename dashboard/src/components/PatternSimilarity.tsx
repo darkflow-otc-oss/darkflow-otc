@@ -53,8 +53,8 @@ function SimilarityBar({ value }: { value: number }) {
 
 export default function PatternSimilarity() {
   const { data, isLoading } = useQuery({
-    queryKey: ["similar", "EURUSD_otc"],
-    queryFn: () => fetchSimilar("EURUSD_otc", 5),
+    queryKey: ["similar", "BTCUSD_otc"],
+    queryFn: () => fetchSimilar("BTCUSD_otc", 5),
     refetchInterval: 10000,
   });
 

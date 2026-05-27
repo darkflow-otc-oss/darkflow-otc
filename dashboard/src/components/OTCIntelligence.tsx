@@ -62,8 +62,8 @@ function Skeleton() {
 
 export default function OTCIntelligence() {
   const { data, isLoading, error } = useQuery({
-    queryKey: ["probability", "EURUSD_otc"],
-    queryFn: () => fetchProbability("EURUSD_otc"),
+    queryKey: ["probability", "BTCUSD_otc"],
+    queryFn: () => fetchProbability("BTCUSD_otc"),
     refetchInterval: 5000,
   });
 
@@ -82,7 +82,7 @@ export default function OTCIntelligence() {
 
       {data && (
         <div className="grid grid-cols-2 gap-3">
-          <Stat label="Asset" value={data.asset ?? "EURUSD_otc"} />
+          <Stat label="Asset" value={data.asset ?? "BTCUSD_otc"} />
           <Stat label="Pattern" value={data.pattern_type ?? "--"} />
           <Stat label="Win Rate" value={`${((data.probability ?? 0) * 100).toFixed(1)}%`} />
           <Stat label="Weighted WR" value={`${((data.weighted_probability ?? 0) * 100).toFixed(1)}%`} />
