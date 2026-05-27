@@ -15,8 +15,10 @@ import logging
 import asyncio
 import json
 import re
+import time
 from datetime import datetime, UTC
 from pathlib import Path
+from scripts.tick_replayer import TickReplayer
 
 # ── Logging Setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -32,7 +34,7 @@ logger = logging.getLogger("darkflow.main")
 DATA_DIR = Path("data/raw")
 
 # ── Broadcast Queue ──────────────────────────────────────────────────────────
-tick_queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
+tick_queue: asyncio.Queue = asyncio.Queue(maxsize=50000)
 
 # ── Tick Parser ──────────────────────────────────────────────────────────────
 _SIO_PREFIX = re.compile(r"^[\x00-\x08]")
@@ -64,8 +66,15 @@ def _parse_tick(line: str) -> dict | None:
     if not isinstance(parsed, list) or not parsed:
         return None
 
-    inner = parsed[0]
-    if not isinstance(inner, list) or len(inner) < 4:
+    # Suporta ambos formatos:
+    # Single-nested: ["BTCUSD_otc", ts, price, dir]
+    # Double-nested: [["BTCUSD_otc", ts, price, dir], ...]
+    if isinstance(parsed[0], list):
+        inner = parsed[0]
+    else:
+        inner = parsed
+
+    if len(inner) < 4:
         return None
 
     symbol, ts_raw, price_raw, direction_raw = inner[0], inner[1], inner[2], inner[3]
@@ -100,12 +109,12 @@ async def _jsonl_watcher():
                 current_size = fpath.stat().st_size
 
                 if fkey not in last_positions:
-                    last_positions[fkey] = current_size
-                    continue
+                    last_positions[fkey] = current_size  # skip existing data; replayer handles history
 
                 if current_size > last_positions[fkey]:
                     with open(fpath, "r", encoding="utf-8") as f:
                         f.seek(last_positions[fkey])
+                        line_count = 0
                         for line in f:
                             line = line.strip()
                             if not line:
@@ -116,6 +125,9 @@ async def _jsonl_watcher():
                                     tick_queue.put_nowait(tick)
                                 except asyncio.QueueFull:
                                     pass
+                            line_count += 1
+                            if line_count % 100 == 0:
+                                await asyncio.sleep(0)  # yield to event loop
                     last_positions[fkey] = current_size
                 elif current_size < last_positions[fkey]:
                     last_positions[fkey] = 0
@@ -137,6 +149,9 @@ class SignalEngine:
         self.candles: deque[dict] = deque(maxlen=10)
         self.pipeline = PatternPipeline(asset=asset, window=5)
         self.signal_count = 0
+        self._last_pattern: str | None = None
+        self._last_signal_ts: float = 0.0
+        self._cooldown_secs: float = 30.0
 
     def process(self, tick: dict) -> dict | None:
         if tick.get("asset", "") != self.asset:
@@ -154,6 +169,17 @@ class SignalEngine:
         result = self.pipeline.run(list(self.candles))
         if not result:
             return None
+
+        pattern_key = result.get("pattern_type", "unknown")
+        now = time.monotonic()
+
+        # Cooldown: só emite se padrão mudou OU passaram 30s do mesmo padrão
+        if self._last_pattern is not None:
+            if pattern_key == self._last_pattern and (now - self._last_signal_ts) < self._cooldown_secs:
+                return None
+
+        self._last_pattern = pattern_key
+        self._last_signal_ts = now
 
         self.signal_count += 1
         action = "COMPRA" if result.get("signal") == "CALL" else "VENDA"
@@ -204,6 +230,7 @@ async def _broadcast_consumer():
 
             signal = signal_engine.process(tick)
             if signal:
+                manager.last_signal = signal
                 await manager.broadcast(signal)
         except Exception as e:
             logger.error("Broadcast consumer error: %s", e)
@@ -218,10 +245,14 @@ _bg_tasks: list[asyncio.Task] = []
 async def lifespan(app: FastAPI):
     logger.info("🔥 DARKFLOW OTC ENGINE — Starting up...")
 
-    # Start JSONL watcher + broadcast consumer
+    # Start TickReplayer (replays historical data at controlled rate)
+    replayer = TickReplayer(queue=tick_queue, asset="BTCUSD_otc")
+    t0 = asyncio.create_task(replayer.start())
+
+    # Start JSONL watcher (tracks new data) + broadcast consumer
     t1 = asyncio.create_task(_jsonl_watcher())
     t2 = asyncio.create_task(_broadcast_consumer())
-    _bg_tasks.extend([t1, t2])
+    _bg_tasks.extend([t0, t1, t2])
 
     logger.info("📡 Capture Layer: watching data/raw/")
     logger.info("🔔 Signal Engine: BTCUSD_otc — pattern detection active")
@@ -288,6 +319,7 @@ async def health():
 class ConnectionManager:
     def __init__(self):
         self.active: list[WebSocket] = []
+        self.last_signal: dict | None = None
 
     async def connect(self, ws: WebSocket):
         await ws.accept()
@@ -315,6 +347,12 @@ manager = ConnectionManager()
 
 async def _ws_handler(websocket: WebSocket):
     await manager.connect(websocket)
+    # Envia último sinal imediatamente para evitar "Waiting for signals..."
+    if manager.last_signal is not None:
+        try:
+            await websocket.send_json(manager.last_signal)
+        except Exception:
+            pass
     try:
         while True:
             # Keep connection alive — the broadcast consumer pushes real data.
