@@ -2,6 +2,7 @@ import OTCIntelligence from "@/components/OTCIntelligence";
 import PatternSimilarity from "@/components/PatternSimilarity";
 import ConsensusTrap from "@/components/ConsensusTrap";
 import LiveFeed from "@/components/LiveFeed";
+import SignalAlert from "@/components/SignalAlert";
 
 export default function Home() {
   return (
@@ -22,7 +23,12 @@ export default function Home() {
 
       {/* Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* OTC Intelligence — top full width */}
+        {/* Signal Alert — top full width */}
+        <div className="lg:col-span-3">
+          <SignalAlert />
+        </div>
+
+        {/* OTC Intelligence — full width */}
         <div className="lg:col-span-3">
           <OTCIntelligence />
         </div>

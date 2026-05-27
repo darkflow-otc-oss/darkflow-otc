@@ -4,10 +4,12 @@ Main Application Entry Point
 FastAPI + WebSocket + MCP Orchestration
 """
 
+from collections import deque
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from api.routes import candles, patterns
+from patterns.detectors.pattern_pipeline import PatternPipeline
 import uvicorn
 import logging
 import asyncio
@@ -124,14 +126,85 @@ async def _jsonl_watcher():
             await asyncio.sleep(1)
 
 
+# ── Signal Engine ────────────────────────────────────────────────────────────
+class SignalEngine:
+    """Accumulates ticks into candles and runs pattern detection pipeline."""
+
+    def __init__(self, asset: str = "BTCUSD_otc", manager: "ConnectionManager | None" = None):
+        self.asset = asset
+        self.manager = manager
+        self.last_tick: dict | None = None
+        self.candles: deque[dict] = deque(maxlen=10)
+        self.pipeline = PatternPipeline(asset=asset, window=5)
+        self.signal_count = 0
+
+    def process(self, tick: dict) -> dict | None:
+        if tick.get("asset", "") != self.asset:
+            return None
+
+        if self.last_tick is not None:
+            candle = self._build_candle(self.last_tick, tick)
+            if candle:
+                self.candles.append(candle)
+        self.last_tick = tick
+
+        if len(self.candles) < self.pipeline.window:
+            return None
+
+        result = self.pipeline.run(list(self.candles))
+        if not result:
+            return None
+
+        self.signal_count += 1
+        action = "COMPRA" if result.get("signal") == "CALL" else "VENDA"
+        signal = {
+            "type": "signal",
+            "asset": self.asset,
+            "action": action,
+            "pattern": result.get("pattern_type", "unknown"),
+            "confidence": round(result.get("confidence", 0), 4),
+            "timestamp": result.get("detected_at", datetime.now(UTC).isoformat()),
+        }
+        logger.info(
+            "🔔 SIGNAL #%d: %s %s | pattern=%s | confidence=%.2f%%",
+            self.signal_count, signal["action"], signal["asset"],
+            signal["pattern"], signal["confidence"] * 100,
+        )
+        return signal
+
+    @staticmethod
+    def _build_candle(t0: dict, t1: dict) -> dict | None:
+        try:
+            o = float(t0["price"])
+            c = float(t1["price"])
+            if o <= 0 or c <= 0:
+                return None
+            return {
+                "asset": t1.get("asset", "BTCUSD_otc"),
+                "ts": str(t1.get("ts", "")),
+                "timeframe": 60,
+                "open": o,
+                "high": max(o, c),
+                "low": min(o, c),
+                "close": c,
+            }
+        except (KeyError, ValueError, TypeError):
+            return None
+
+
 # ── Broadcast Consumer ───────────────────────────────────────────────────────
 async def _broadcast_consumer():
-    """Consume ticks from queue and broadcast to all WebSocket clients."""
-    logger.info("📡 Broadcast consumer started.")
+    """Consume ticks from queue, run pattern detection, broadcast to all WebSocket clients."""
+    logger.info("📡 Broadcast consumer + SignalEngine started.")
+    signal_engine = SignalEngine(asset="BTCUSD_otc")
     while True:
         try:
             tick = await tick_queue.get()
             await manager.broadcast(tick)
+
+            signal = signal_engine.process(tick)
+            if signal:
+                await manager.broadcast(signal)
         except Exception as e:
             logger.error("Broadcast consumer error: %s", e)
             await asyncio.sleep(0.5)
@@ -151,8 +224,8 @@ async def lifespan(app: FastAPI):
     _bg_tasks.extend([t1, t2])
 
     logger.info("📡 Capture Layer: watching data/raw/")
+    logger.info("🔔 Signal Engine: BTCUSD_otc — pattern detection active")
     logger.info("🧠 AI Engine: standby")
-    logger.info("📊 Pattern Engine: standby")
     logger.info("✅ All systems ready.")
 
     yield

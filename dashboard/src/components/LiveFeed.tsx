@@ -20,6 +20,7 @@ export default function LiveFeed() {
   useEffect(() => {
     if (!data) return;
     const raw = data as Record<string, unknown>;
+    if (raw.type === "signal") return;
     const tick: TickItem = {
       ts: (raw.ts ?? raw.timestamp ?? new Date().toISOString()) as string,
       asset: (raw.asset ?? "BTCUSD_otc") as string,
