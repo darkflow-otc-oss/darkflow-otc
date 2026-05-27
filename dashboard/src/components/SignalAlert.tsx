@@ -8,6 +8,7 @@ interface SignalItem {
   action: string;
   pattern: string;
   confidence: number;
+  backtest_accuracy: number;
   timestamp: string;
   asset: string;
 }
@@ -27,6 +28,7 @@ export default function SignalAlert() {
       action: (raw.action as string) ?? "COMPRA",
       pattern: (raw.pattern as string) ?? "unknown",
       confidence: (raw.confidence as number) ?? 0,
+      backtest_accuracy: (raw.backtest_accuracy as number) ?? 0,
       timestamp: (raw.timestamp as string) ?? new Date().toISOString(),
       asset: (raw.asset as string) ?? "BTCUSD_otc",
     };
@@ -103,6 +105,11 @@ export default function SignalAlert() {
                 {(lastSignal.confidence * 100).toFixed(0)}%
               </span>
               <p className="text-xs text-slate-500">confidence</p>
+              {lastSignal.backtest_accuracy > 0 && (
+                <p className="text-xs text-amber-400 mt-1">
+                  Hist. Acc: {lastSignal.backtest_accuracy.toFixed(1)}%
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -143,6 +150,11 @@ export default function SignalAlert() {
                   <span className="text-xs text-slate-500">
                     {(s.confidence * 100).toFixed(0)}%
                   </span>
+                  {s.backtest_accuracy > 0 && (
+                    <span className="text-xs text-amber-400/70">
+                      {s.backtest_accuracy.toFixed(0)}%
+                    </span>
+                  )}
                 </div>
               </div>
             ))}

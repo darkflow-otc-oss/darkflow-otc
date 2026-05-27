@@ -153,6 +153,20 @@ class SignalEngine:
         self._last_signal_ts: float = 0.0
         self._cooldown_secs: float = 30.0
 
+        # Backtest-validated accuracy per pattern (best window)
+        self._backtest_accuracy: dict[str, float] = {
+            "strong_momentum": 62.07,
+            "exhaustion_reversal": 50.85,
+            "consensus_trap": 49.21,
+            "compression_breakout": 50.00,
+        }
+        self._optimal_window: dict[str, int] = {
+            "strong_momentum": 10,
+            "exhaustion_reversal": 5,
+            "consensus_trap": 15,
+            "compression_breakout": 5,
+        }
+
     def process(self, tick: dict) -> dict | None:
         if tick.get("asset", "") != self.asset:
             return None
@@ -181,20 +195,37 @@ class SignalEngine:
         self._last_pattern = pattern_key
         self._last_signal_ts = now
 
+        confidence = round(result.get("confidence", 0), 4)
+
+        # ── Quality Filter (backtest-validated) ──
+        # Só emite se: strong_momentum >= 80% OU qualquer padrão >= 85%
+        is_strong = pattern_key == "strong_momentum"
+        if is_strong:
+            if confidence < 0.80:
+                return None
+        else:
+            if confidence < 0.85:
+                return None
+
         self.signal_count += 1
         action = "COMPRA" if result.get("signal") == "CALL" else "VENDA"
+        backtest_acc = self._backtest_accuracy.get(pattern_key, 0.0)
+        optimal_win = self._optimal_window.get(pattern_key, 5)
         signal = {
             "type": "signal",
             "asset": self.asset,
             "action": action,
-            "pattern": result.get("pattern_type", "unknown"),
-            "confidence": round(result.get("confidence", 0), 4),
+            "pattern": pattern_key,
+            "confidence": confidence,
+            "backtest_accuracy": backtest_acc,
+            "optimal_window": optimal_win,
             "timestamp": result.get("detected_at", datetime.now(UTC).isoformat()),
         }
         logger.info(
-            "🔔 SIGNAL #%d: %s %s | pattern=%s | confidence=%.2f%%",
+            "🔔 SIGNAL #%d: %s %s | pattern=%s | confidence=%.2f%% | hist_acc=%.1f%% | optimal=%dc",
             self.signal_count, signal["action"], signal["asset"],
             signal["pattern"], signal["confidence"] * 100,
+            backtest_acc, optimal_win,
         )
         return signal
 
