@@ -6,13 +6,15 @@ import asyncio
 import json
 import logging
 import re
+from collections import deque
 from pathlib import Path
 from datetime import datetime, UTC
 
 logger = logging.getLogger("darkflow.replayer")
 
 DATA_DIR = Path("data/raw")
-TICK_RATE = 0.6  # segundos entre ticks (simula ~1.6 ticks/s)
+TICK_RATE = 1.0  # max 1 tick por segundo
+DEDUP_WINDOW = 5000  # número de ticks recentes usados para evitar duplicatas
 
 _SIO_PREFIX = re.compile(r"^[\x00-\x08]")
 _SIO_COUNTER = re.compile(r"^\d+-?")
@@ -27,6 +29,7 @@ class TickReplayer:
         self.running = False
         self.position = 0
         self.total_played = 0
+        self._recent_hashes: deque[tuple] = deque(maxlen=DEDUP_WINDOW)
 
     async def start(self):
         """Loop principal — monitora arquivos e faz replay de ticks em loop contínuo."""
@@ -75,6 +78,12 @@ class TickReplayer:
                     tick = self._parse_line(line)
                     if tick is None:
                         continue
+
+                    # Dedup: skip if identical tick was emitted recently
+                    tick_hash = (tick["asset"], tick["price"], tick["ts"])
+                    if tick_hash in self._recent_hashes:
+                        continue
+                    self._recent_hashes.append(tick_hash)
 
                     try:
                         self.queue.put_nowait(tick)

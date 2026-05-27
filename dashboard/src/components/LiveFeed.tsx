@@ -27,7 +27,14 @@ export default function LiveFeed() {
       price: (raw.price ?? raw.close ?? raw.bid ?? 0) as number,
       volume: (raw.volume ?? 1) as number,
     };
-    setTicks((prev) => [tick, ...prev].slice(0, 20));
+    setTicks((prev) => {
+      // Dedup: skip if tick with same (time, price, asset) already in list
+      const dup = prev.find(
+        (t) => t.ts === tick.ts && t.price === tick.price && t.asset === tick.asset
+      );
+      if (dup) return prev;
+      return [tick, ...prev].slice(0, 20);
+    });
   }, [data]);
 
   return (
