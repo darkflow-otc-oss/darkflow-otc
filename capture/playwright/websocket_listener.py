@@ -88,13 +88,19 @@ class WebSocketListener:
             logger.info(f"🌐 WebSocket connected: {ws_url}")
             self.active_sockets.append(ws)
 
+            def _to_str(payload) -> str:
+                """Playwright emits raw bytes for FrameReceived/FrameSent."""
+                if isinstance(payload, str):
+                    return payload
+                return payload.decode("utf-8", errors="replace")
+
             ws.on(
                 "framesent",
-                lambda frame: self._handle_ws_message(ws_url, "sent", frame.payload),
+                lambda payload: self._handle_ws_message(ws_url, "sent", _to_str(payload)),
             )
             ws.on(
                 "framereceived",
-                lambda frame: self._handle_ws_message(ws_url, "received", frame.payload),
+                lambda payload: self._handle_ws_message(ws_url, "received", _to_str(payload)),
             )
             ws.on(
                 "close",

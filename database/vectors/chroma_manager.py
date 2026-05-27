@@ -74,6 +74,24 @@ class ChromaManager:
         """Return total number of stored patterns."""
         return self.collection.count()
 
+    def get_all(self, limit: int = 100) -> list[dict]:
+        """Return all stored patterns with metadata (no embedding query)."""
+        if self.count() == 0:
+            return []
+        results = self.collection.get(limit=min(limit, self.count()))
+        return self._format_get(results)
+
+    def _format_get(self, results: dict) -> list[dict]:
+        items = []
+        ids = results.get("ids", [])
+        metadatas = results.get("metadatas", [])
+        for i, pid in enumerate(ids):
+            items.append({
+                "id": pid,
+                "metadata": metadatas[i] if i < len(metadatas) else {},
+            })
+        return items
+
     def _format_results(self, results: dict) -> list[dict]:
         items = []
         ids = results.get("ids", [[]])[0]

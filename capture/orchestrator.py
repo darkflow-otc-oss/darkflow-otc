@@ -15,9 +15,9 @@ from capture.recorder.raw_recorder import RawRecorder
 
 logger = logging.getLogger("darkflow.capture.orchestrator")
 
-MAX_RETRIES = 5
-RETRY_BASE_DELAY = 2  # segundos → 2, 4, 8, 16, 32
-WS_IDLE_TIMEOUT = 30   # segundos sem mensagem → desconexão
+MAX_RETRIES = 0       # 0 = loop infinito
+RETRY_DELAY = 5        # segundos entre tentativas de reconexão
+WS_IDLE_TIMEOUT = 120  # segundos sem mensagem → desconexão
 
 
 class CaptureOrchestrator:
@@ -42,17 +42,21 @@ class CaptureOrchestrator:
         logger.info("🔥 DARKFLOW CAPTURE ORCHESTRATOR — STARTING")
         logger.info(f"   Asset     : {self.asset}")
         logger.info(f"   Duration  : {self.duration}s")
-        logger.info(f"   Max Retry : {MAX_RETRIES}")
+        limit = "∞ (loop infinito)" if MAX_RETRIES == 0 else str(MAX_RETRIES)
+        logger.info(f"   Max Retry : {limit}")
+        logger.info(f"   Watchdog  : {WS_IDLE_TIMEOUT}s idle timeout")
         logger.info("━" * 60)
 
         self.started_at = datetime.utcnow()
         self.recorder = RawRecorder(asset=self.asset)
         self.recorder.start_db_timer()
 
-        for attempt in range(1, MAX_RETRIES + 1):
+        attempt = 1
+        while True:
             self._attempts = attempt
+            retry_info = f"{attempt}/∞" if MAX_RETRIES == 0 else f"{attempt}/{MAX_RETRIES}"
             logger.info(
-                f"🔄 Attempt {attempt}/{MAX_RETRIES} — "
+                f"🔄 Attempt {retry_info} — "
                 f"{datetime.utcnow().isoformat()}"
             )
 
@@ -109,23 +113,17 @@ class CaptureOrchestrator:
                 break
 
             except Exception as e:
+                retry_info = f"{attempt}/∞" if MAX_RETRIES == 0 else f"{attempt}/{MAX_RETRIES}"
                 logger.error(
-                    f"❌ Attempt {attempt}/{MAX_RETRIES} failed: {e}"
+                    f"❌ Attempt {retry_info} failed: {e}"
                 )
 
-                if attempt < MAX_RETRIES:
-                    delay = RETRY_BASE_DELAY ** attempt
-                    logger.warning(
-                        f"⏳ Retrying in {delay}s... "
-                        f"(attempt {attempt + 1} of {MAX_RETRIES})"
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    logger.critical(
-                        "🚨 MAX RETRIES EXCEEDED — all 5 attempts failed. "
-                        "Sending alert and exiting gracefully."
-                    )
-                    self._send_alert()
+                logger.warning(
+                    f"⏳ Retrying in {RETRY_DELAY}s... "
+                    f"(next attempt: {attempt + 1})"
+                )
+                await asyncio.sleep(RETRY_DELAY)
+                attempt += 1
                 # Fecha browser da tentativa falha antes de retry
                 await self._safe_close_browser()
 
@@ -182,7 +180,8 @@ class CaptureOrchestrator:
         logger.info("━" * 60)
         logger.info(f"CAPTURE {status}")
         logger.info(f"   Duration  : {elapsed}s")
-        logger.info(f"   Attempts  : {self._attempts}/{MAX_RETRIES}")
+        retry_info = f"{self._attempts}/∞" if MAX_RETRIES == 0 else f"{self._attempts}/{MAX_RETRIES}"
+        logger.info(f"   Attempts  : {retry_info}")
         if self.listener:
             logger.info(f"   Messages  : {self.listener.message_count}")
             logger.info(f"   Sockets   : {len(self.listener.active_sockets)}")

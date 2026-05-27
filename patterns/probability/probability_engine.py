@@ -75,25 +75,48 @@ class ProbabilityEngine:
         d = self._data.get(key, {})
         total = d.get("total", 0)
         wins = d.get("wins", 0)
+        losses = d.get("losses", 0)
 
         if total < 5:
             return {
+                "asset": self.asset,
                 "pattern_type": pattern_type,
-                "signal": signal,
+                "total_occurrences": total,
+                "wins": wins,
+                "losses": losses,
                 "probability": 0.50,
+                "weighted_probability": 0.50,
+                "classification": "UNKNOWN",
+                "recommendation": "SKIP",
                 "sample_size": total,
                 "reliable": False,
                 "note": "insufficient data",
             }
 
         prob = wins / total
+        weighted = (wins + 1) / (total + 2)
+
+        if prob >= 0.65:
+            classification = "HIGH"
+            recommendation = "ENTER"
+        elif prob >= 0.50:
+            classification = "MEDIUM"
+            recommendation = "WATCH"
+        else:
+            classification = "LOW"
+            recommendation = "SKIP"
+
         return {
+            "asset": self.asset,
             "pattern_type": pattern_type,
-            "signal": signal,
-            "probability": round(prob, 4),
-            "sample_size": total,
+            "total_occurrences": total,
             "wins": wins,
-            "losses": d.get("losses", 0),
+            "losses": losses,
+            "probability": round(prob, 4),
+            "weighted_probability": round(weighted, 4),
+            "classification": classification,
+            "recommendation": recommendation,
+            "sample_size": total,
             "reliable": total >= 20,
         }
 

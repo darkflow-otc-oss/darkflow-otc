@@ -1,4 +1,4 @@
-const BACKEND = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BACKEND = process.env.NEXT_PUBLIC_API_URL ?? "http://darkflow_api:8000";
 
 export async function GET(
   request: Request,
