@@ -275,12 +275,6 @@ async def _broadcast_consumer():
                 if telegram_notifier:
                     await telegram_notifier.send_signal(signal)
 
-            # ── Check pending Telegram signal results ──
-            if telegram_notifier:
-                price = float(tick.get("price", 0))
-                if price > 0:
-                    await telegram_notifier.check_pending_results(price)
-
         except Exception as e:
             logger.error("Broadcast consumer error: %s", e)
             await asyncio.sleep(0.5)
