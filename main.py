@@ -228,6 +228,7 @@ class SignalEngine:
             "exhaustion_reversal": 50.85,
             "consensus_trap": 49.21,
             "compression_breakout": 50.00,
+            "pullback_continuation": 0.0,
         }
         self._optimal_window: dict[str, int] = {
             "strong_momentum": 10,
@@ -269,14 +270,13 @@ class SignalEngine:
 
         confidence = round(result.get("confidence", 0), 4)
 
-        # ── Quality Filter (backtest-validated) ──
-        # Só emite se: strong_momentum >= 80% OU qualquer padrão >= 85%
-        is_strong = pattern_key == "strong_momentum"
-        if is_strong:
-            if confidence < 0.80:
+        # ── Quality Filter ──
+        # strong_momentum/pullback_continuation >= 75%, demais >= 80%
+        if pattern_key in ("strong_momentum", "pullback_continuation"):
+            if confidence < 0.75:
                 return None
         else:
-            if confidence < 0.85:
+            if confidence < 0.80:
                 return None
 
         self.signal_count += 1
