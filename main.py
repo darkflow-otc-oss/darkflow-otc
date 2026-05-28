@@ -14,11 +14,16 @@ import uvicorn
 import logging
 import asyncio
 import json
+import os
 import re
 import time
 from datetime import datetime, UTC
 from pathlib import Path
+from dotenv import load_dotenv
 from scripts.tick_replayer import TickReplayer
+from scripts.telegram_bot import TelegramNotifier
+
+load_dotenv()
 
 # ── Logging Setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -211,6 +216,7 @@ class SignalEngine:
         action = "COMPRA" if result.get("signal") == "CALL" else "VENDA"
         backtest_acc = self._backtest_accuracy.get(pattern_key, 0.0)
         optimal_win = self._optimal_window.get(pattern_key, 5)
+        entry_price = float(tick.get("price", 0))
         signal = {
             "type": "signal",
             "asset": self.asset,
@@ -219,6 +225,7 @@ class SignalEngine:
             "confidence": confidence,
             "backtest_accuracy": backtest_acc,
             "optimal_window": optimal_win,
+            "close": entry_price,
             "timestamp": result.get("detected_at", datetime.now(UTC).isoformat()),
         }
         logger.info(
@@ -263,6 +270,17 @@ async def _broadcast_consumer():
             if signal:
                 manager.last_signal = signal
                 await manager.broadcast(signal)
+
+                # ── Telegram notification ──
+                if telegram_notifier:
+                    await telegram_notifier.send_signal(signal)
+
+            # ── Check pending Telegram signal results ──
+            if telegram_notifier:
+                price = float(tick.get("price", 0))
+                if price > 0:
+                    await telegram_notifier.check_pending_results(price)
+
         except Exception as e:
             logger.error("Broadcast consumer error: %s", e)
             await asyncio.sleep(0.5)
@@ -274,7 +292,23 @@ _bg_tasks: list[asyncio.Task] = []
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global telegram_notifier
     logger.info("🔥 DARKFLOW OTC ENGINE — Starting up...")
+
+    # ── Telegram Notifier ──
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    if token and chat_id and token != "your_bot_token_here":
+        telegram_notifier = TelegramNotifier(
+            token=token,
+            chat_id=chat_id,
+            candle_duration=300,
+            bet_amount=100.0,
+            payout_rate=0.85,
+        )
+        logger.info("🤖 Telegram Bot initialized — chat_id=%s", chat_id)
+    else:
+        logger.warning("🤖 Telegram Bot DISABLED — TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured")
 
     # Start TickReplayer (replays historical data at controlled rate)
     replayer = TickReplayer(queue=tick_queue, asset="BTCUSD_otc")
@@ -293,6 +327,8 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("🛑 DARKFLOW OTC ENGINE — Shutting down...")
+    if telegram_notifier:
+        await telegram_notifier.close()
     for t in _bg_tasks:
         t.cancel()
     await asyncio.gather(*_bg_tasks, return_exceptions=True)
@@ -374,6 +410,7 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+telegram_notifier: TelegramNotifier | None = None
 
 
 async def _ws_handler(websocket: WebSocket):

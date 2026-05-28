@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     deepseek_model_main: str = "deepseek-chat"
     deepseek_model_reasoner: str = "deepseek-reasoner"
 
+    # ── Telegram ───────────────────────────────────────────────────────────────
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     # ── Capture ───────────────────────────────────────────────────────────────
     quotex_url: str = "https://quotex.io"
     quotex_email: str = ""
