@@ -8,7 +8,9 @@ Runs on WSL host, connects via iProyal proxy.
 import asyncio
 import json
 import logging
+import os
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -25,7 +27,7 @@ API_URL = "http://localhost:8000/api/ingest/tick"
 TARGET_URL = "https://qxbroker.com/en/trade"
 WS_FILTER = "ws2.qxbroker.com"
 INACTIVITY_TIMEOUT = 30
-INITIAL_WS_TIMEOUT = 30  # first WS connection can take longer
+INITIAL_WS_TIMEOUT = 45
 LOG_FILE = "/tmp/ws_proxy.log"
 
 # ── Logging ─────────────────────────────────────────────────────────────
@@ -98,6 +100,21 @@ class TickProxy:
         self.error_count = 0
         self.ws_connected = False
         self._client: httpx.AsyncClient | None = None
+        self._xvfb_proc: subprocess.Popen | None = None
+        self._use_proxy = False  # Start without proxy to bypass Cloudflare; enable if needed
+
+    def _ensure_display(self):
+        """Start Xvfb virtual display if no DISPLAY available (needed for non-headless)."""
+        if "DISPLAY" not in os.environ:
+            try:
+                self._xvfb_proc = subprocess.Popen(
+                    ["Xvfb", ":99", "-screen", "0", "1366x768x24", "-ac"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                os.environ["DISPLAY"] = ":99"
+                logger.info("🖥  Xvfb started on :99")
+            except FileNotFoundError:
+                logger.warning("Xvfb not found — falling back to headless")
 
     async def _post_tick(self, tick: dict):
         """POST a single tick to the DARKFLOW API."""
@@ -164,7 +181,6 @@ class TickProxy:
             return
 
         raw_cookies = json.loads(COOKIES_PATH.read_text())
-        # Normalize cookies: keep only standard fields playwright accepts
         cookies = [
             {
                 "name": c["name"],
@@ -180,6 +196,7 @@ class TickProxy:
         ]
         logger.info("Loaded %d cookies from %s", len(cookies), COOKIES_PATH)
 
+        self._ensure_display()
         stealth = Stealth()
 
         while True:
@@ -212,7 +229,6 @@ class TickProxy:
         clean = []
         for c in raw_cookies:
             cookie = {k: v for k, v in c.items() if k in valid_fields}
-            # Playwright requires expires to be a positive float; session cookies omit it
             expires = cookie.get("expires")
             if expires is not None and isinstance(expires, (int, float)) and expires > 0:
                 cookie["expires"] = float(expires)
@@ -221,6 +237,39 @@ class TickProxy:
             clean.append(cookie)
         return clean
 
+    async def _wait_cloudflare(self, page, timeout: int = 45):
+        """Wait for Cloudflare Turnstile to resolve. Returns True if passed."""
+        try:
+            title = await page.title()
+            if "just a moment" not in title.lower():
+                logger.info("✅ No Cloudflare — title: %s", title)
+                return True
+
+            logger.info("⏳ Cloudflare challenge detected — waiting...")
+            for i in range(timeout):
+                await asyncio.sleep(1)
+                title = await page.title()
+                if "just a moment" not in title.lower():
+                    logger.info("✅ Cloudflare bypassed after %ds", i + 1)
+                    await asyncio.sleep(2)
+                    return True
+                if (i + 1) % 10 == 0:
+                    logger.info("⏳ Cloudflare waiting... %ds", i + 1)
+
+            # Timeout — try reload
+            logger.warning("Cloudflare timeout — reloading page...")
+            await page.reload(wait_until="networkidle")
+            await asyncio.sleep(3)
+            title = await page.title()
+            if "just a moment" not in title.lower():
+                logger.info("✅ Cloudflare passed after reload")
+                return True
+            logger.error("Cloudflare persists after reload")
+            return False
+        except Exception as e:
+            logger.debug("Cloudflare check error: %s", e)
+            return True
+
     async def _run_browser(self, stealth: Stealth, cookies: list[dict]):
         """Single browser session — exits on crash or inactivity timeout."""
         self.last_tick_time = time.monotonic()
@@ -228,25 +277,28 @@ class TickProxy:
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(
-                headless=True,
+                headless=False,
                 args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--disable-gpu",
                 ],
-                proxy=self._build_proxy_config(),
+                proxy=self._build_proxy_config() if self._use_proxy else None,
             )
 
             safe_cookies = self._sanitize_cookies(cookies)
 
             context = await browser.new_context(
-                viewport={"width": 1280, "height": 720},
+                viewport={"width": 1366, "height": 768},
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/124.0.0.0 Safari/537.36"
                 ),
+                locale="en-US",
             )
             await context.add_cookies(safe_cookies)
 
@@ -270,21 +322,19 @@ class TickProxy:
                 await browser.close()
                 return
 
-            logger.info("✅ Page loaded — waiting for WebSocket ticks...")
+            # Wait for Cloudflare to clear
+            cf_ok = await self._wait_cloudflare(page, timeout=45)
+            if cf_ok:
+                logger.info("✅ Page ready — url: %s, title: %s", page.url, await page.title())
+            else:
+                logger.warning("⚠️  Cloudflare still active — page may not work")
 
-            # Take debug screenshot
+            # Debug screenshot
             try:
                 await page.screenshot(path="/tmp/ws_proxy_debug.png")
-                logger.info("📸 Debug screenshot saved: /tmp/ws_proxy_debug.png")
+                logger.info("📸 Screenshot saved")
             except Exception:
                 pass
-
-            # Extra wait for page JS to initialize and open WS
-            await asyncio.sleep(3)
-
-            # Log page URL after load (detect redirects)
-            current_url = page.url
-            logger.info("📍 Current URL: %s", current_url)
 
             # Inactivity monitor loop
             while True:
