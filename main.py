@@ -44,6 +44,9 @@ tick_queue: asyncio.Queue = asyncio.Queue(maxsize=50000)
 # ── Last Price (real-time from ws_proxy) ─────────────────────────────────────
 last_price: dict[str, float] = {}
 
+# ── Sentiment (indicador de volume da Quotex) ───────────────────────────────
+last_sentiment: dict[str, dict] = {}
+
 # ── Tick Parser ──────────────────────────────────────────────────────────────
 _SIO_PREFIX = re.compile(r"^[\x00-\x08]")
 _SIO_COUNTER = re.compile(r"^\d+-?")
@@ -207,6 +210,27 @@ class CandleAggregator:
             return time.time()
 
 
+# ── Multi-Asset Signal Engine ───────────────────────────────────────────────
+class MultiAssetSignalEngine:
+    """Gerencia multiplos ativos OTC, cada um com seu proprio buffer e pipeline."""
+
+    def __init__(self, manager: "ConnectionManager | None" = None):
+        self.manager = manager
+        self._engines: dict[str, "SignalEngine"] = {}
+        self._lock = asyncio.Lock()
+
+    async def process_tick(self, tick: dict) -> dict | None:
+        asset = tick.get("asset", "")
+        if not asset or "_otc" not in asset:
+            return None
+        async with self._lock:
+            if asset not in self._engines:
+                self._engines[asset] = SignalEngine(asset=asset, manager=self.manager)
+                logger.info("🆕 New asset registered: %s (total: %d)", asset, len(self._engines))
+            engine = self._engines[asset]
+        return engine.process(tick)
+
+
 # ── Signal Engine ────────────────────────────────────────────────────────────
 class SignalEngine:
     """Accumulates ticks into candles and runs pattern detection pipeline."""
@@ -261,6 +285,35 @@ class SignalEngine:
         elif slope_norm < -0.0001:
             return "DOWN"
         return "NEUTRAL"
+
+    def _apply_sentiment_multiplier(self, raw_signal: str, base_confidence: float) -> tuple[float, float]:
+        """Aplica multiplicador baseado no sentimento. Retorna (confianca ajustada, multiplicador)."""
+        sent = last_sentiment.get(self.asset)
+        if not sent:
+            return base_confidence, 1.0
+
+        majority = sent.get("majority", "")
+        majority_pct = sent.get("majority_percent", 50)
+
+        strength = 1.0 + (majority_pct - 50) / 100
+
+        if raw_signal == "CALL":
+            aligned = (majority == "SELL")
+        else:
+            aligned = (majority == "BUY")
+
+        if aligned:
+            multiplier = min(1.15, 1.0 + (strength - 1.0) * 0.5)
+        else:
+            multiplier = max(0.85, 1.0 - (strength - 1.0) * 0.3)
+
+        adjusted = base_confidence * multiplier
+        adjusted = min(0.99, max(0.50, adjusted))
+
+        logger.info("📊 Sentiment: %s %s%% | Signal: %s | Aligned: %s | Multiplier: %.2f | Conf: %.2f → %.2f",
+                    majority, majority_pct, "COMPRA" if raw_signal == "CALL" else "VENDA",
+                    aligned, multiplier, base_confidence, adjusted)
+        return adjusted, multiplier
 
     def process(self, tick: dict) -> dict | None:
         if tick.get("asset", "") != self.asset:
@@ -326,6 +379,14 @@ class SignalEngine:
                 )
                 return None
 
+        # ── Sentiment Multiplier (informativo, nao afeta thresholds) ──
+        adjusted_confidence, sentiment_multiplier = self._apply_sentiment_multiplier(raw_signal, confidence)
+
+        # ── Duration based on ORIGINAL confidence ──
+        duration_minutes = 2 if confidence >= 0.90 else 5
+        if confidence >= 0.90:
+            logger.info("🎯 High-confidence signal (%.2f%%) → 2min expiry", confidence * 100)
+
         self.signal_count += 1
         action = "COMPRA" if raw_signal == "CALL" else "VENDA"
         backtest_acc = self._backtest_accuracy.get(pattern_key, 0.0)
@@ -337,17 +398,21 @@ class SignalEngine:
             "action": action,
             "pattern": pattern_key,
             "confidence": confidence,
+            "adjusted_confidence": round(adjusted_confidence, 4),
+            "raw_confidence": confidence,
+            "sentiment_multiplier": round(sentiment_multiplier, 3),
             "backtest_accuracy": backtest_acc,
             "optimal_window": optimal_win,
             "close": entry_price,
             "trend_bias": trend_bias,
+            "duration_minutes": duration_minutes,
             "timestamp": result.get("detected_at", datetime.now(UTC).isoformat()),
         }
         logger.info(
-            "🔔 SIGNAL #%d: %s %s | pattern=%s | confidence=%.2f%% | hist_acc=%.1f%% | optimal=%dc | trend=%s",
+            "🔔 SIGNAL #%d: %s %s | pattern=%s | confidence=%.2f%% (adj=%.2f%% x%.2f) | duration=%dmin | hist_acc=%.1f%% | optimal=%dc | trend=%s",
             self.signal_count, signal["action"], signal["asset"],
-            signal["pattern"], signal["confidence"] * 100,
-            backtest_acc, optimal_win, trend_bias,
+            signal["pattern"], confidence * 100, adjusted_confidence * 100, sentiment_multiplier,
+            duration_minutes, backtest_acc, optimal_win, trend_bias,
         )
         return signal
 
@@ -366,8 +431,8 @@ async def _check_gain_loss(sig_id: int, asset: str, delay: int = 300):
 # ── Broadcast Consumer ───────────────────────────────────────────────────────
 async def _broadcast_consumer():
     """Consume ticks from queue, run pattern detection, broadcast to all WebSocket clients."""
-    logger.info("📡 Broadcast consumer + SignalEngine started.")
-    signal_engine = SignalEngine(asset="BTCUSD_otc")
+    logger.info("📡 Broadcast consumer + MultiAssetSignalEngine started.")
+    signal_engine = MultiAssetSignalEngine(manager=manager)
     while True:
         try:
             tick = await tick_queue.get()
@@ -380,7 +445,7 @@ async def _broadcast_consumer():
 
             await manager.broadcast(tick)
 
-            signal = signal_engine.process(tick)
+            signal = await signal_engine.process_tick(tick)
             if signal:
                 manager.last_signal = signal
                 await manager.broadcast(signal)
@@ -391,7 +456,7 @@ async def _broadcast_consumer():
                     if sig_id is not None:
                         # Schedule GAIN/LOSS check after candle duration
                         asyncio.create_task(
-                            _check_gain_loss(sig_id, signal["asset"], delay=300)
+                            _check_gain_loss(sig_id, signal["asset"], delay=signal.get("duration_minutes", 5) * 60)
                         )
 
         except Exception as e:
@@ -591,6 +656,17 @@ async def ingest_tick(request: Request):
         last_price[asset] = float(price)
 
     return {"status": "ok", "queued": asset}
+
+
+# ── Sentiment Endpoint ───────────────────────────────────────────────────────
+@app.post("/api/ingest/sentiment")
+async def ingest_sentiment(request: Request):
+    """Recebe o indicador de volume/sentimento da Quotex."""
+    data = await request.json()
+    asset = data.get("asset", "BTCUSD_otc")
+    last_sentiment[asset] = data
+    logger.debug("📊 Sentiment updated for %s: %s %s%%", asset, data.get("majority"), data.get("majority_percent"))
+    return {"status": "ok", "asset": asset}
 
 
 # ── Placeholder Routes ─────────────────────────────────────────────────────────

@@ -1,0 +1,13 @@
+.venv
+venv
+node_modules
+data
+logs
+.git
+__pycache__
+*.pyc
+.env
+*.log
+tmp
+dashboard/.next
+dashboard/node_modules
