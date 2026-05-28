@@ -303,10 +303,10 @@ class SignalEngine:
             if confidence < 0.88:
                 return None
         elif pattern_key in ("strong_momentum", "pullback_continuation"):
-            if confidence < 0.75:
+            if confidence < 0.70:
                 return None
         else:
-            if confidence < 0.80:
+            if confidence < 0.70:
                 return None
 
         # ── Trend Filter ──
