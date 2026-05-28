@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # ── Replayer ──────────────────────────────────────────────────────────────
     enable_replayer: bool = False
 
+    # ── Trend Filter ──────────────────────────────────────────────────────────
+    allow_counter_trend: bool = False
+
     # ── Paths ─────────────────────────────────────────────────────────────────
     data_dir: Path = Path("./data")
     logs_dir: Path = Path("./logs")

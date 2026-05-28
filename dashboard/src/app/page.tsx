@@ -3,6 +3,9 @@ import PatternSimilarity from "@/components/PatternSimilarity";
 import ConsensusTrap from "@/components/ConsensusTrap";
 import LiveFeed from "@/components/LiveFeed";
 import SignalAlert from "@/components/SignalAlert";
+import RiskWidget from "@/components/RiskWidget";
+import InventoryWidget from "@/components/InventoryWidget";
+import PnLWidget from "@/components/PnLWidget";
 
 export default function Home() {
   return (
@@ -22,27 +25,38 @@ export default function Home() {
       </header>
 
       {/* Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Signal Alert — top full width */}
-        <div className="lg:col-span-3">
+        <div className="lg:col-span-4">
           <SignalAlert />
         </div>
 
-        {/* OTC Intelligence — full width */}
-        <div className="lg:col-span-3">
-          <OTCIntelligence />
+        {/* Risk widgets row */}
+        <div className="lg:col-span-1">
+          <RiskWidget />
         </div>
-
-        {/* Pattern Similarity + Consensus Trap — middle row */}
-        <div className="lg:col-span-2">
-          <PatternSimilarity />
+        <div className="lg:col-span-1">
+          <PnLWidget />
+        </div>
+        <div className="lg:col-span-1">
+          <InventoryWidget />
         </div>
         <div className="lg:col-span-1">
           <ConsensusTrap />
         </div>
 
+        {/* OTC Intelligence — full width */}
+        <div className="lg:col-span-4">
+          <OTCIntelligence />
+        </div>
+
+        {/* Pattern Similarity — full width */}
+        <div className="lg:col-span-4">
+          <PatternSimilarity />
+        </div>
+
         {/* Live Feed — bottom full width */}
-        <div className="lg:col-span-3">
+        <div className="lg:col-span-4">
           <LiveFeed />
         </div>
       </div>

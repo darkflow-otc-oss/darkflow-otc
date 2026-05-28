@@ -8,7 +8,7 @@ from collections import deque
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from api.routes import candles, patterns
+from api.routes import candles, patterns, risk
 from patterns.detectors.pattern_pipeline import PatternPipeline
 import uvicorn
 import logging
@@ -237,6 +237,31 @@ class SignalEngine:
             "compression_breakout": 5,
         }
 
+    def _compute_trend_bias(self) -> str:
+        """Linear regression slope over last 12 candles (60s window)."""
+        if len(self.candles) < 12:
+            return "NEUTRAL"
+
+        recent = list(self.candles)[-12:]
+        closes = [float(c["close"]) for c in recent]
+        n = len(closes)
+        x_mean = (n - 1) / 2
+        y_mean = sum(closes) / n
+
+        num = sum((i - x_mean) * (closes[i] - y_mean) for i in range(n))
+        den = sum((i - x_mean) ** 2 for i in range(n))
+
+        if den == 0:
+            return "NEUTRAL"
+
+        slope_norm = (num / den) / y_mean
+
+        if slope_norm > 0.0001:
+            return "UP"
+        elif slope_norm < -0.0001:
+            return "DOWN"
+        return "NEUTRAL"
+
     def process(self, tick: dict) -> dict | None:
         if tick.get("asset", "") != self.asset:
             return None
@@ -271,16 +296,38 @@ class SignalEngine:
         confidence = round(result.get("confidence", 0), 4)
 
         # ── Quality Filter ──
-        # strong_momentum/pullback_continuation >= 75%, demais >= 80%
-        if pattern_key in ("strong_momentum", "pullback_continuation"):
+        # COMPRA (CALL): >= 88% (0% win rate abaixo disso)
+        # VENDA (PUT): strong_momentum/pullback >= 75%, demais >= 80%
+        raw_signal = result.get("signal", "")
+        if raw_signal == "CALL":
+            if confidence < 0.88:
+                return None
+        elif pattern_key in ("strong_momentum", "pullback_continuation"):
             if confidence < 0.75:
                 return None
         else:
             if confidence < 0.80:
                 return None
 
+        # ── Trend Filter ──
+        trend_bias = self._compute_trend_bias()
+        allow_counter = os.getenv("ALLOW_COUNTER_TREND", "false").lower() == "true"
+        if not allow_counter and trend_bias != "NEUTRAL":
+            if trend_bias == "DOWN" and raw_signal == "CALL":
+                logger.info(
+                    "🛑 Trend filter: blocking COMPRA in DOWN trend | confidence=%.2f%%",
+                    confidence,
+                )
+                return None
+            if trend_bias == "UP" and raw_signal == "PUT":
+                logger.info(
+                    "🛑 Trend filter: blocking VENDA in UP trend | confidence=%.2f%%",
+                    confidence,
+                )
+                return None
+
         self.signal_count += 1
-        action = "COMPRA" if result.get("signal") == "CALL" else "VENDA"
+        action = "COMPRA" if raw_signal == "CALL" else "VENDA"
         backtest_acc = self._backtest_accuracy.get(pattern_key, 0.0)
         optimal_win = self._optimal_window.get(pattern_key, 5)
         entry_price = float(tick.get("price", 0))
@@ -293,13 +340,14 @@ class SignalEngine:
             "backtest_accuracy": backtest_acc,
             "optimal_window": optimal_win,
             "close": entry_price,
+            "trend_bias": trend_bias,
             "timestamp": result.get("detected_at", datetime.now(UTC).isoformat()),
         }
         logger.info(
-            "🔔 SIGNAL #%d: %s %s | pattern=%s | confidence=%.2f%% | hist_acc=%.1f%% | optimal=%dc",
+            "🔔 SIGNAL #%d: %s %s | pattern=%s | confidence=%.2f%% | hist_acc=%.1f%% | optimal=%dc | trend=%s",
             self.signal_count, signal["action"], signal["asset"],
             signal["pattern"], signal["confidence"] * 100,
-            backtest_acc, optimal_win,
+            backtest_acc, optimal_win, trend_bias,
         )
         return signal
 
@@ -426,6 +474,7 @@ app.add_middleware(
 
 app.include_router(candles.router)
 app.include_router(patterns.router)
+app.include_router(risk.router)
 
 
 # ── Health Check ───────────────────────────────────────────────────────────────
