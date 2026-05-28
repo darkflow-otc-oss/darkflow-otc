@@ -146,6 +146,67 @@ async def _jsonl_watcher():
             await asyncio.sleep(1)
 
 
+# ── Candle Aggregator ───────────────────────────────────────────────────────
+class CandleAggregator:
+    """Aggregates raw ticks into OHLCV candles using fixed time windows."""
+
+    def __init__(self, window_seconds: int = 5):
+        self.window_seconds = window_seconds
+        self._bucket_start: float | None = None
+        self._ticks: list[dict] = []
+
+    def add_tick(self, tick: dict) -> dict | None:
+        """Add tick to current bucket. Returns completed candle when window closes."""
+        ts_str = tick.get("ts", "")
+        tick_ts = self._parse_ts(ts_str)
+
+        if self._bucket_start is None:
+            self._bucket_start = tick_ts
+            self._ticks.append(tick)
+            return None
+
+        if tick_ts - self._bucket_start < self.window_seconds:
+            self._ticks.append(tick)
+            return None
+
+        candle = self._finalize_bucket()
+        self._bucket_start = tick_ts
+        self._ticks = [tick]
+        return candle
+
+    def _finalize_bucket(self) -> dict | None:
+        if len(self._ticks) < 2:
+            self._ticks.clear()
+            return None
+
+        prices = [float(t["price"]) for t in self._ticks]
+        asset = self._ticks[0].get("asset", "BTCUSD_otc")
+        ts = self._ticks[-1].get("ts", "")
+
+        candle = {
+            "asset": asset,
+            "ts": ts,
+            "timeframe": self.window_seconds,
+            "open": prices[0],
+            "high": max(prices),
+            "low": min(prices),
+            "close": prices[-1],
+            "volume": len(self._ticks),
+        }
+        self._ticks.clear()
+        return candle
+
+    @staticmethod
+    def _parse_ts(ts_str: str) -> float:
+        try:
+            if "T" in ts_str:
+                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                return dt.timestamp()
+            return float(ts_str)
+        except (ValueError, TypeError):
+            return time.time()
+
+
 # ── Signal Engine ────────────────────────────────────────────────────────────
 class SignalEngine:
     """Accumulates ticks into candles and runs pattern detection pipeline."""
@@ -153,8 +214,8 @@ class SignalEngine:
     def __init__(self, asset: str = "BTCUSD_otc", manager: "ConnectionManager | None" = None):
         self.asset = asset
         self.manager = manager
-        self.last_tick: dict | None = None
-        self.candles: deque[dict] = deque(maxlen=10)
+        self.aggregator = CandleAggregator(window_seconds=5)
+        self.candles: deque[dict] = deque(maxlen=50)
         self.pipeline = PatternPipeline(asset=asset, window=5)
         self.signal_count = 0
         self._last_pattern: str | None = None
@@ -179,13 +240,16 @@ class SignalEngine:
         if tick.get("asset", "") != self.asset:
             return None
 
-        if self.last_tick is not None:
-            candle = self._build_candle(self.last_tick, tick)
-            if candle:
-                self.candles.append(candle)
-        self.last_tick = tick
+        candle = self.aggregator.add_tick(tick)
+        if candle is None:
+            return None
 
-        if len(self.candles) < self.pipeline.window:
+        self.candles.append(candle)
+        logger.debug("🕯️  Candle agregado: O=%.2f H=%.2f L=%.2f C=%.2f vol=%d | buffer=%d/%d",
+                     candle["open"], candle["high"], candle["low"], candle["close"],
+                     candle["volume"], len(self.candles), self.candles.maxlen)
+
+        if len(self.candles) < 10:
             return None
 
         result = self.pipeline.run(list(self.candles))
@@ -238,26 +302,6 @@ class SignalEngine:
             backtest_acc, optimal_win,
         )
         return signal
-
-    @staticmethod
-    def _build_candle(t0: dict, t1: dict) -> dict | None:
-        try:
-            o = float(t0["price"])
-            c = float(t1["price"])
-            if o <= 0 or c <= 0:
-                return None
-            return {
-                "asset": t1.get("asset", "BTCUSD_otc"),
-                "ts": str(t1.get("ts", "")),
-                "timeframe": 60,
-                "open": o,
-                "high": max(o, c),
-                "low": min(o, c),
-                "close": c,
-            }
-        except (KeyError, ValueError, TypeError):
-            return None
-
 
 # ── GAIN/LOSS checker (background task per signal) ────────────────────────────
 async def _check_gain_loss(sig_id: int, asset: str, delay: int = 300):
