@@ -25,6 +25,7 @@ API_URL = "http://localhost:8000/api/ingest/tick"
 TARGET_URL = "https://qxbroker.com/en/trade"
 WS_FILTER = "ws2.qxbroker.com"
 INACTIVITY_TIMEOUT = 30
+INITIAL_WS_TIMEOUT = 30  # first WS connection can take longer
 LOG_FILE = "/tmp/ws_proxy.log"
 
 # ── Logging ─────────────────────────────────────────────────────────────
@@ -133,11 +134,14 @@ class TickProxy:
             await self._post_tick(tick)
 
     async def _handle_ws(self, ws):
-        """Handle new WebSocket connection — filter by ws2.qxbroker.com."""
+        """Handle new WebSocket connection."""
+        logger.info("🔌 WS detected: %s", ws.url)
+
         if WS_FILTER not in ws.url:
+            logger.info("ℹ️  Ignoring WS (not quotex): %s", ws.url)
             return
 
-        logger.info("🔌 WebSocket connected: %s", ws.url)
+        logger.info("🔌 Quotex WebSocket connected: %s", ws.url)
         self.ws_connected = True
         self.last_tick_time = time.monotonic()
 
@@ -268,13 +272,27 @@ class TickProxy:
 
             logger.info("✅ Page loaded — waiting for WebSocket ticks...")
 
+            # Take debug screenshot
+            try:
+                await page.screenshot(path="/tmp/ws_proxy_debug.png")
+                logger.info("📸 Debug screenshot saved: /tmp/ws_proxy_debug.png")
+            except Exception:
+                pass
+
+            # Extra wait for page JS to initialize and open WS
+            await asyncio.sleep(3)
+
+            # Log page URL after load (detect redirects)
+            current_url = page.url
+            logger.info("📍 Current URL: %s", current_url)
+
             # Inactivity monitor loop
             while True:
                 idle = time.monotonic() - self.last_tick_time
 
                 if not self.ws_connected:
-                    if idle > 15:
-                        logger.warning("No WebSocket after 15s — restarting")
+                    if idle > INITIAL_WS_TIMEOUT:
+                        logger.warning("No Quotex WS after %ds — restarting", INITIAL_WS_TIMEOUT)
                         break
                 elif idle > INACTIVITY_TIMEOUT:
                     logger.warning("No ticks for %ds — restarting", INACTIVITY_TIMEOUT)
