@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     capture_headless: bool = False
     capture_timeout: int = 30000
 
+    # ── Replayer ──────────────────────────────────────────────────────────────
+    enable_replayer: bool = False
+
     # ── Paths ─────────────────────────────────────────────────────────────────
     data_dir: Path = Path("./data")
     logs_dir: Path = Path("./logs")

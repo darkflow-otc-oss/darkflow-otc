@@ -41,6 +41,9 @@ DATA_DIR = Path("data/raw")
 # ── Broadcast Queue ──────────────────────────────────────────────────────────
 tick_queue: asyncio.Queue = asyncio.Queue(maxsize=50000)
 
+# ── Last Price (real-time from ws_proxy) ─────────────────────────────────────
+last_price: dict[str, float] = {}
+
 # ── Tick Parser ──────────────────────────────────────────────────────────────
 _SIO_PREFIX = re.compile(r"^[\x00-\x08]")
 _SIO_COUNTER = re.compile(r"^\d+-?")
@@ -256,6 +259,18 @@ class SignalEngine:
             return None
 
 
+# ── GAIN/LOSS checker (background task per signal) ────────────────────────────
+async def _check_gain_loss(sig_id: int, asset: str, delay: int = 300):
+    """Wait candle_duration seconds, then check real price and send GAIN/LOSS."""
+    await asyncio.sleep(delay)
+    exit_price = last_price.get(asset)
+    if exit_price is None:
+        logger.warning("GainLoss #%d: no price for %s — skipping", sig_id, asset)
+        return
+    if telegram_notifier:
+        await telegram_notifier.send_gain_loss(sig_id, exit_price)
+
+
 # ── Broadcast Consumer ───────────────────────────────────────────────────────
 async def _broadcast_consumer():
     """Consume ticks from queue, run pattern detection, broadcast to all WebSocket clients."""
@@ -264,6 +279,13 @@ async def _broadcast_consumer():
     while True:
         try:
             tick = await tick_queue.get()
+
+            # Update last_price for GAIN/LOSS tracking
+            asset = tick.get("asset", "")
+            price = tick.get("price")
+            if asset and price is not None:
+                last_price[asset] = float(price)
+
             await manager.broadcast(tick)
 
             signal = signal_engine.process(tick)
@@ -273,7 +295,12 @@ async def _broadcast_consumer():
 
                 # ── Telegram notification ──
                 if telegram_notifier:
-                    await telegram_notifier.send_signal(signal)
+                    sig_id = await telegram_notifier.send_signal(signal)
+                    if sig_id is not None:
+                        # Schedule GAIN/LOSS check after candle duration
+                        asyncio.create_task(
+                            _check_gain_loss(sig_id, signal["asset"], delay=300)
+                        )
 
         except Exception as e:
             logger.error("Broadcast consumer error: %s", e)
@@ -305,13 +332,22 @@ async def lifespan(app: FastAPI):
         logger.warning("🤖 Telegram Bot DISABLED — TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured")
 
     # Start TickReplayer (replays historical data at controlled rate)
-    replayer = TickReplayer(queue=tick_queue, asset="BTCUSD_otc")
-    t0 = asyncio.create_task(replayer.start())
+    enable_replayer = os.getenv("ENABLE_REPLAYER", "false").lower() == "true"
+    if enable_replayer:
+        replayer = TickReplayer(queue=tick_queue, asset="BTCUSD_otc")
+        t0 = asyncio.create_task(replayer.start())
+        logger.info("📼 TickReplayer: ENABLED — replaying historical data")
+    else:
+        logger.info("⏸️  TickReplayer: DISABLED — relying on ws_proxy for real-time data")
+        t0 = None
 
     # Start JSONL watcher (tracks new data) + broadcast consumer
     t1 = asyncio.create_task(_jsonl_watcher())
     t2 = asyncio.create_task(_broadcast_consumer())
-    _bg_tasks.extend([t0, t1, t2])
+    if t0:
+        _bg_tasks.extend([t0, t1, t2])
+    else:
+        _bg_tasks.extend([t1, t2])
 
     logger.info("📡 Capture Layer: watching data/raw/")
     logger.info("🔔 Signal Engine: BTCUSD_otc — pattern detection active")
@@ -455,7 +491,13 @@ async def ingest_tick(request: Request):
     except asyncio.QueueFull:
         logger.warning("Tick queue full — dropping tick")
 
-    return {"status": "ok", "queued": tick.get("asset", "?")}
+    # Update last_price for GAIN/LOSS tracking
+    asset = tick.get("asset", "")
+    price = tick.get("price")
+    if asset and price is not None:
+        last_price[asset] = float(price)
+
+    return {"status": "ok", "queued": asset}
 
 
 # ── Placeholder Routes ─────────────────────────────────────────────────────────
