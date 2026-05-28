@@ -122,11 +122,44 @@ class QuotexBrowser:
         self.session_start = datetime.now(UTC)
         logger.info("✅ Browser started.")
 
+    # ── Proxy Fallback ─────────────────────────────────────────────────────
+    async def _recreate_context_without_proxy(self):
+        """Recria o browser context sem proxy (fallback)."""
+        logger.warning("🔄 Recreating browser context WITHOUT proxy...")
+        if self.page:
+            await self.page.close()
+            self.page = None
+        if self.context:
+            await self.context.close()
+            self.context = None
+        self._use_proxy = False
+        self.context = await self.browser.new_context(
+            viewport={"width": 1366, "height": 768},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            locale="en-US",
+        )
+        self.is_logged_in = False  # force fresh login since context changed
+
     # ── Navigate ─────────────────────────────────────────────────────────────
     async def navigate(self, url: str = QUOTEX_URL):
         """Navega para a URL com bypass de Cloudflare Turnstile."""
         logger.info(f"🌐 Navigating to: {url}")
-        await self.page.goto(url, timeout=TIMEOUT, wait_until="domcontentloaded")
+        try:
+            await self.page.goto(url, timeout=TIMEOUT, wait_until="domcontentloaded")
+        except Exception as e:
+            err_msg = str(e).lower()
+            if ("tunnel" in err_msg or "proxy" in err_msg) and self._use_proxy:
+                logger.warning(f"⚠️  Proxy connection failed, retrying without proxy...")
+                await self._recreate_context_without_proxy()
+                self.page = await self.context.new_page()
+                await Stealth().apply_stealth_async(self.page)
+                await self.page.goto(url, timeout=TIMEOUT, wait_until="domcontentloaded")
+            else:
+                raise
         await self._wait_for_cloudflare(timeout=45)
         logger.info(f"✅ Page loaded: {self.page.url}")
 
@@ -155,6 +188,64 @@ class QuotexBrowser:
         except Exception as e:
             logger.debug(f"Cloudflare check: {e}")
 
+    # ── Login Tab Handler ───────────────────────────────────────────────────
+    async def _click_login_tab(self):
+        """Clicks the 'Login' tab if the page shows Login | Registration tabs.
+        The email/password form is hidden when the Registration tab is active.
+        """
+        tab_selectors = [
+            "button:has-text('Log in')",
+            "button:has-text('Login')",
+            "button:has-text('Sign in')",
+            "button:has-text('Sign In')",
+            "a:has-text('Log in')",
+            "a:has-text('Login')",
+            "a:has-text('Sign in')",
+            "a:has-text('Sign In')",
+            "span:has-text('Log in')",
+            "span:has-text('Login')",
+            "[role='tab']:has-text('Log')",
+            "[role='tab']:has-text('Sign')",
+            ".tab:has-text('Log in')",
+            ".tab:has-text('Login')",
+            ".nav-link:has-text('Log in')",
+            ".nav-link:has-text('Login')",
+        ]
+        for sel in tab_selectors:
+            try:
+                el = self.page.locator(sel).first
+                if await el.count() > 0 and await el.is_visible():
+                    await el.click()
+                    logger.info(f"🖱  Clicked Login tab: '{sel}'")
+                    await asyncio.sleep(2)
+                    return
+            except Exception:
+                continue
+
+        # Fallback: try clicking any element containing "Login" text
+        try:
+            login_text_el = self.page.locator("text=Log in").first
+            if await login_text_el.count() > 0 and await login_text_el.is_visible():
+                await login_text_el.click()
+                logger.info("🖱  Clicked Login tab via text match")
+                await asyncio.sleep(2)
+                return
+        except Exception:
+            pass
+
+        # Fallback: try "Login" without space
+        try:
+            login_text_el = self.page.locator("text=Login").first
+            if await login_text_el.count() > 0 and await login_text_el.is_visible():
+                await login_text_el.click()
+                logger.info("🖱  Clicked Login tab via 'Login' text match")
+                await asyncio.sleep(2)
+                return
+        except Exception:
+            pass
+
+        logger.debug("🔍 No Login tab found — form may already be visible.")
+
     # ── Login ────────────────────────────────────────────────────────────────
     async def login(self):
         """Realiza login na Quotex. Pula se já autenticado."""
@@ -170,18 +261,217 @@ class QuotexBrowser:
         try:
             await self.navigate(f"{QUOTEX_URL}/en/sign-in")
             await asyncio.sleep(3)
-            email_input = self.page.locator("input[name='email']").first
-            await email_input.wait_for(state="attached", timeout=TIMEOUT)
-            await email_input.fill(QUOTEX_EMAIL, force=True)
-            await self.page.locator("input[name='password']").first.fill(QUOTEX_PASSWORD, force=True)
+
+            title = await self.page.title()
+            logger.info(f"📄 Sign-in page title: '{title}' | url: {self.page.url}")
+
+            # ── Step 1: Click header "Log in" button to open the modal ─────
+            # The sign-in page has a header button that opens a modal with the form.
+            # The form elements exist in DOM but are hidden until modal opens.
+            modal_opened = False
+            header_login_selectors = [
+                ".header__button-log-in",
+                "a:has-text('Log in')",
+                "button:has-text('Log in')",
+                "[class*='header'] a:has-text('Log')",
+            ]
+            for sel in header_login_selectors:
+                try:
+                    el = self.page.locator(sel).first
+                    if await el.count() > 0 and await el.is_visible():
+                        await el.click()
+                        logger.info(f"🖱  Clicked header login button: '{sel}'")
+                        modal_opened = True
+                        await asyncio.sleep(2)
+                        break
+                except Exception:
+                    continue
+
+            if not modal_opened:
+                logger.warning("⚠️  Could not find header login button — trying form anyway.")
+
+            # ── Step 2: Force-show ALL form elements ──────────────────────────
+            # The Quotex modal hides elements behind tabs and nested divs.
+            # We aggressively make everything visible before interacting.
+            await self.page.evaluate("""() => {
+                // Force show ALL potentially hidden inputs and their ancestors
+                const allInputs = document.querySelectorAll('input');
+                allInputs.forEach(el => {
+                    let p = el;
+                    while (p && p !== document.body) {
+                        if (p.style && p.style.display === 'none') p.style.display = '';
+                        if (p.style && p.style.visibility === 'hidden') p.style.visibility = 'visible';
+                        if (p.style && p.style.opacity === '0') p.style.opacity = '1';
+                        // Remove aria-hidden
+                        if (p.getAttribute && p.getAttribute('aria-hidden') === 'true') {
+                            p.setAttribute('aria-hidden', 'false');
+                        }
+                        // Remove hidden attribute
+                        if (p.hasAttribute && p.hasAttribute('hidden')) {
+                            p.removeAttribute('hidden');
+                        }
+                        p = p.parentElement;
+                    }
+                    // Remove HTML5 validation from registration fields
+                    if (el.id && el.id.includes('registration')) {
+                        el.removeAttribute('required');
+                        el.removeAttribute('data-required');
+                    }
+                    if (el.name && el.name.toLowerCase().includes('registration')) {
+                        el.removeAttribute('required');
+                    }
+                });
+                return 'done';
+            }""")
+            await asyncio.sleep(0.5)
+
+            # ── Step 3: Debug DOM state ────────────────────────────────────
+            debug_info = await self.page.evaluate("""() => {
+                const info = {};
+                const emailEl = document.querySelector('#emailInput, input[name="email"], input[type="email"]');
+                if (emailEl) info.email = {id: emailEl.id, visible: emailEl.offsetParent !== null};
+                const allPwds = document.querySelectorAll('input[type="password"]');
+                info.passwordCount = allPwds.length;
+                allPwds.forEach((el, i) => {
+                    info['pwd' + i] = {id: el.id, name: el.name, visible: el.offsetParent !== null};
+                });
+                info.loginTabActive = !!document.querySelector('.modal-sign__tab.active');
+                info.regTabActive = !!document.querySelector('.modal-sign__tab:not(.active)');
+                return info;
+            }""")
+            logger.info(f"🔍 DOM state: {json.dumps(debug_info, ensure_ascii=False)}")
+
+            # ── Step 4: Fill using Playwright native locator methods ───────
+            # Prefer native Playwright fill() which triggers framework events properly
+            filled = False
+            try:
+                # Try filling email via Playwright (requires visibility)
+                email_locator = self.page.locator("#emailInput")
+                if await email_locator.count() > 0:
+                    await email_locator.fill(QUOTEX_EMAIL)
+                    logger.info("✅ Email filled via Playwright")
+                    filled = True
+            except Exception as e:
+                logger.debug(f"Playwright email fill failed: {e}")
+
+            if not filled:
+                # Fallback: JS fill
+                logger.info("⚠️  Playwright fill failed — using JS fallback")
+                js_result = await self.page.evaluate("""(args) => {
+                    const email = args.email;
+                    const pwd = args.password;
+                    const emailEl = document.querySelector('#emailInput, input[name="email"], input[type="email"]');
+                    const pwdEl = document.querySelector('#password-input, input[name="password"]:not([id*="registration"])');
+                    const regPwd = document.querySelector('#password-input-registration');
+                    const nativeSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    ).set;
+                    if (emailEl) {
+                        nativeSetter.call(emailEl, email);
+                        emailEl.dispatchEvent(new Event('input', {bubbles: true}));
+                        emailEl.dispatchEvent(new Event('change', {bubbles: true}));
+                    }
+                    if (pwdEl) {
+                        nativeSetter.call(pwdEl, pwd);
+                        pwdEl.dispatchEvent(new Event('input', {bubbles: true}));
+                        pwdEl.dispatchEvent(new Event('change', {bubbles: true}));
+                    }
+                    if (regPwd) {
+                        nativeSetter.call(regPwd, 'Pass123!@#');
+                        regPwd.dispatchEvent(new Event('input', {bubbles: true}));
+                        regPwd.removeAttribute('required');
+                    }
+                    // Fill any other required inputs
+                    document.querySelectorAll('input[required]').forEach(el => {
+                        if (!el.value && el !== emailEl && el !== pwdEl && el !== regPwd) {
+                            if (el.type === 'email' || (el.name && el.name.includes('email')))
+                                nativeSetter.call(el, 'placeholder@example.com');
+                            else
+                                nativeSetter.call(el, 'Pass123!@#');
+                            el.dispatchEvent(new Event('input', {bubbles: true}));
+                            el.removeAttribute('required');
+                        }
+                    });
+                    return JSON.stringify({
+                        ok: true,
+                        emailFilled: !!emailEl,
+                        pwdFilled: !!pwdEl
+                    });
+                }""", {"email": QUOTEX_EMAIL, "password": QUOTEX_PASSWORD})
+                logger.info(f"🔍 JS fill: {js_result}")
+
             await self.screenshot("before_login")
-            await self.page.locator("button:has-text('Sign in')").click()
-            await self.page.wait_for_load_state("networkidle", timeout=TIMEOUT)
+
+            # ── Step 5: Click "Sign in" button ─────────────────────────────
+            submitted = False
+            submit_selectors = [
+                "button:has-text('Sign in')",
+                "button:has-text('Sign In')",
+                "button:has-text('Log in')",
+                "button:has-text('Login')",
+                ".modal-sign__block-button",
+            ]
+            for sel in submit_selectors:
+                try:
+                    btn = self.page.locator(sel).first
+                    if await btn.count() > 0 and await btn.is_visible():
+                        await btn.click()
+                        logger.info(f"🖱  Clicked submit: '{sel}'")
+                        submitted = True
+                        break
+                except Exception as e:
+                    logger.debug(f"Submit click {sel}: {e}")
+
+            if not submitted:
+                try:
+                    await self.page.locator("#password-input").press("Enter")
+                    logger.info("⌨  Pressed Enter on password")
+                    submitted = True
+                except Exception as e:
+                    logger.debug(f"Enter press: {e}")
+
+            if not submitted:
+                logger.warning("⚠️  JS form submit as last resort")
+                await self.page.evaluate("""() => {
+                    const form = document.querySelector('form, .modal-sign__form');
+                    if (form && form.requestSubmit) form.requestSubmit();
+                    else if (form && form.submit) form.submit();
+                }""")
+
+            await asyncio.sleep(6)
             await self.screenshot("after_login")
+
+            # ── Step 6: Verify ─────────────────────────────────────────────
+            current_url = self.page.url.lower()
+            if "sign-in" in current_url or "login" in current_url:
+                error_text = await self.page.evaluate("""() => {
+                    const results = [];
+                    document.querySelectorAll('input').forEach(el => {
+                        if (el.validationMessage) results.push(el.id + ': ' + el.validationMessage);
+                    });
+                    document.querySelectorAll(
+                        '[class*="error"], [class*="alert"], .toast, [role="alert"], ' +
+                        '.notification, .message, [class*="message"], [class*="notify"]'
+                    ).forEach(el => {
+                        const t = el.textContent.trim();
+                        if (t && t.length < 500) results.push(t);
+                    });
+                    const captcha = document.querySelector(
+                        '.g-recaptcha, [src*="captcha"], [src*="recaptcha"], iframe[src*="captcha"]'
+                    );
+                    if (captcha) results.push('CAPTCHA_DETECTED');
+                    // Get page body text for clues
+                    const bodyText = document.body.innerText.substring(0, 500);
+                    results.push('BODY: ' + bodyText);
+                    return results.filter(r => r).join(' | ') || 'no error text found';
+                }""")
+                logger.error(f"❌ Login error/state: {error_text}")
+                logger.error(f"❌ Login failed — still on sign-in (url={current_url})")
+                return False
 
             self.is_logged_in = True
             await self._save_cookies()
-            logger.info("✅ Login successful — cookies saved.")
+            logger.info("✅ Login successful — cookies saved. (url=%s)", current_url)
             return True
         except Exception as e:
             logger.error(f"❌ Login failed: {e}")
@@ -195,7 +485,16 @@ class QuotexBrowser:
         await self.navigate(f"{QUOTEX_URL}/en/trade")
         await asyncio.sleep(3)
         await self.screenshot("trade_screen")
-        logger.info("✅ Trade screen loaded.")
+
+        current_url = self.page.url.lower()
+        if "sign-in" in current_url or "login" in current_url:
+            logger.error(
+                "❌ Trade screen blocked — redirected to sign-in (url=%s). "
+                "Login may have failed silently.",
+                current_url,
+            )
+        else:
+            logger.info("✅ Trade screen loaded. (url=%s)", current_url)
 
     # ── Screenshot ───────────────────────────────────────────────────────────
     async def screenshot(self, label: str = "capture"):

@@ -5,7 +5,7 @@ FastAPI + WebSocket + MCP Orchestration
 """
 
 from collections import deque
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from api.routes import candles, patterns
@@ -435,6 +435,27 @@ async def _ws_handler(websocket: WebSocket):
 @app.websocket("/ws/realtime")
 async def websocket_endpoint(websocket: WebSocket):
     await _ws_handler(websocket)
+
+
+# ── Tick Ingest (ws_proxy) ─────────────────────────────────────────────────────
+@app.post("/api/ingest/tick", tags=["Ingest"])
+async def ingest_tick(request: Request):
+    """Receive ticks from ws_proxy running on WSL host and push to broadcast queue."""
+    try:
+        tick = await request.json()
+    except Exception:
+        return {"status": "error", "message": "invalid JSON"}
+
+    required = {"ts", "asset", "price", "direction"}
+    if not all(k in tick for k in required):
+        return {"status": "error", "message": f"missing fields, need: {required}"}
+
+    try:
+        tick_queue.put_nowait(tick)
+    except asyncio.QueueFull:
+        logger.warning("Tick queue full — dropping tick")
+
+    return {"status": "ok", "queued": tick.get("asset", "?")}
 
 
 # ── Placeholder Routes ─────────────────────────────────────────────────────────
