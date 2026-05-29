@@ -446,33 +446,32 @@ class TickProxy:
             await browser.close()
 
     async def _asset_rotation_loop(self, page):
-        """Muda o ativo na interface a cada 2 minutos."""
-        import random
+        """Muda o ativo na interface a cada 60 segundos."""
         asset_index = 0
         while True:
-            await asyncio.sleep(60)  # rotate every 60s (43 assets)
+            await asyncio.sleep(60)
             try:
                 asset = ASSETS[asset_index % len(ASSETS)]
                 asset_index += 1
-                # Tenta clicar no seletor de ativos e escolher o proximo
-                possible_selectors = [
-                    ".asset-selector",
-                    ".selected-asset",
-                    "[class*='current-asset']",
-                    ".h9gji",
-                ]
-                for sel in possible_selectors:
-                    elem = await page.query_selector(sel)
-                    if elem:
-                        await elem.click()
-                        await asyncio.sleep(1)
-                        break
-                # Tenta clicar no texto do ativo
-                display_name = asset.replace("_otc", " (OTC)")
-                await page.click(f"text={display_name}", timeout=3000)
-                logger.info("🔄 Rotated asset to %s", asset)
+                # Clica no ativo atual para abrir o seletor
+                btn = await page.query_selector("div.h9gji") or await page.query_selector("div.ifu_i")
+                if btn:
+                    await btn.click()
+                    await asyncio.sleep(1.5)
+                # Formata termo de busca: EURUSD_otc -> EUR/USD
+                name = asset.replace("_otc", "")
+                if len(name) == 6 and name.isalpha():
+                    search_text = f"{name[:3]}/{name[3:]}"
+                elif "USD" in name and name != "USD":
+                    search_text = name.replace("USD", "/USD").replace("//", "/")
+                else:
+                    search_text = name
+                # Busca qualquer elemento visivel contendo o texto do ativo
+                item = page.locator(f"text={search_text}").first
+                await item.click(timeout=5000)
+                logger.info("🔄 Rotated asset to %s (%s)", asset, search_text)
             except Exception as e:
-                logger.warning("Asset rotation failed: %s", e)
+                logger.warning("Asset rotation failed for %s (search=%s): %s", asset, search_text, str(e)[:80])
 
 
 # ── Trade Executor (recebe ordens da API e executa na Quotex) ────────────
