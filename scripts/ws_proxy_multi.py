@@ -25,7 +25,16 @@ logger = logging.getLogger(ASSET)
 
 COOKIES_PATH = Path.home() / "darkflow_otc" / "data" / "session" / "cookies.json"
 API_URL = "http://localhost:8000/api/ingest/tick"
-TARGET_URL = "https://qxbroker.com/en/trade"
+ASSET_URLS = {
+    "BTCUSD_otc": "https://qxbroker.com/en/trade#BTCUSD_otc",
+    "BCHUSD_otc": "https://qxbroker.com/en/trade#BCHUSD_otc",
+    "EURUSD_otc": "https://qxbroker.com/en/trade#EURUSD_otc",
+    "USDJPY_otc": "https://qxbroker.com/en/trade#USDJPY_otc",
+    "TRUMPUSD_otc": "https://qxbroker.com/en/trade#TRUMPUSD_otc",
+    "GBPUSD_otc": "https://qxbroker.com/en/trade#GBPUSD_otc",
+    "LTCUSD_otc": "https://qxbroker.com/en/trade#LTCUSD_otc",
+}
+TARGET_URL = ASSET_URLS.get(ASSET, f"https://qxbroker.com/en/trade#{ASSET}")
 
 _SIO_PREFIX = re.compile(rb'^[\x00-\x08]')
 _SIO_COUNTER = re.compile(rb'^\d+-?')
