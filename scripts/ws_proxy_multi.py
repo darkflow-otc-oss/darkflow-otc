@@ -30,6 +30,30 @@ TARGET_URL = "https://qxbroker.com/en/trade"
 _SIO_PREFIX = re.compile(rb'^[\x00-\x08]')
 _SIO_COUNTER = re.compile(rb'^\d+-?')
 
+# Alias map: each asset can match multiple symbol formats from Quotex
+ASSET_ALIASES = {
+    "BTCUSD_otc": ["btcusd", "btc/usd", "btc", "bitcoin"],
+    "BCHUSD_otc": ["bchusd", "bch/usd", "bch", "bitcoin cash"],
+    "ETHUSD_otc": ["ethusd", "eth/usd", "eth", "ethereum"],
+    "EURUSD_otc": ["eurusd", "eur/usd"],
+    "LTCUSD_otc": ["ltcusd", "ltc/usd", "ltc", "litecoin"],
+    "GBPUSD_otc": ["gbpusd", "gbp/usd"],
+    "USDJPY_otc": ["usdjpy", "usd/jpy"],
+    "TRUMPUSD_otc": ["trumpusd", "trump/usd", "trump"],
+    "AUDUSD_otc": ["audusd", "aud/usd"],
+    "USDCAD_otc": ["usdcad", "usd/cad"],
+    "EURCAD_otc": ["eurcad", "eur/cad"],
+    "USDCHF_otc": ["usdchf", "usd/chf"],
+    "EURGBP_otc": ["eurgbp", "eur/gbp"],
+    "GBPJPY_otc": ["gbpjpy", "gbp/jpy"],
+}
+
+def _match_asset(sym: str) -> bool:
+    """Check if symbol matches our target asset using alias list."""
+    aliases = ASSET_ALIASES.get(ASSET, [ASSET.replace('_otc', '').lower()])
+    sym_lower = str(sym).lower()
+    return any(alias in sym_lower for alias in aliases)
+
 def parse_frame(payload):
     if not payload: return None
     cleaned = _SIO_PREFIX.sub(b'', payload)
@@ -43,10 +67,11 @@ def parse_frame(payload):
     items = data if (data and isinstance(data[0], list)) else [data]
     for item in items:
         if not isinstance(item, list) or len(item) < 4: continue
-        sym, ts_raw, price_raw, dir_raw = item[0], item[1], item[2], item[3]
-        if sym != ASSET: continue
+        sym = str(item[0])
+        if not _match_asset(sym): continue
+        ts_raw, price_raw, dir_raw = item[1], item[2], item[3]
         ts_iso = datetime.utcfromtimestamp(float(ts_raw)).isoformat() if isinstance(ts_raw, (int, float)) else datetime.now(timezone.utc).isoformat()
-        ticks.append({"ts": ts_iso, "asset": sym, "price": float(price_raw), "direction": int(dir_raw)})
+        ticks.append({"ts": ts_iso, "asset": ASSET, "price": float(price_raw), "direction": int(dir_raw)})
     return ticks
 
 class TradeExecutor:
