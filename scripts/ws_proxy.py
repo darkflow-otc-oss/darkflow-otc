@@ -19,11 +19,23 @@ from pathlib import Path
 import httpx
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
+from aiohttp import web
 
 # ── Config ──────────────────────────────────────────────────────────────
 PROXY_URL = "http://j3LUJ4ZiEaDJFBw2:SSeAXAcMPb7sfPv6_country-br_city-saopaulo_session-iqjDNG8n_lifetime-168h@geo.iproyal.com:12321"
 COOKIES_PATH = Path.home() / "darkflow_otc" / "data" / "session" / "cookies.json"
 API_URL = "http://localhost:8000/api/ingest/tick"
+ASSETS = [
+    "BTCUSD_otc", "BCHUSD_otc", "ETHUSD_otc", "EURUSD_otc", "LTCUSD_otc",
+    "EURCAD_otc", "USDDZD_otc", "AUDJPY_otc", "USDCHF_otc", "USDCOP_otc",
+    "EURAUD_otc", "GBPJPY_otc", "GBPNZD_otc", "NZDUSD_otc", "AUDCHF_otc",
+    "AUDUSD_otc", "USDINR_otc", "USDCAD_otc", "USDPKR_otc", "GBPAUD_otc",
+    "GBPCAD_otc", "NZDCHF_otc", "USDARS_otc", "USDMXN_otc", "USDEGP_otc",
+    "AUDCAD_otc", "EURCHF_otc", "EURGBP_otc", "EURJPY_otc", "NZDCAD_otc",
+    "NZDJPY_otc", "USDBDT_otc", "USDIDR_otc", "USDJPY_otc", "USDNGN_otc",
+    "USDPHP_otc", "KRAUDNZD_otc", "CADCHF_otc", "GBPCHF_otc", "CADJPY_otc",
+    "USDZAR_otc", "GBPUSD_otc", "REURNZD_otc",
+]
 TARGET_URL = "https://qxbroker.com/en/trade"
 WS_FILTER = "ws2.qxbroker.com"
 INACTIVITY_TIMEOUT = 30
@@ -229,8 +241,12 @@ class TickProxy:
         ws.on("framereceived", self._on_frame_received)
 
         try:
-            await ws.wait_for_event("close", timeout=300)
-        except asyncio.TimeoutError:
+            # Keep connection alive until WS actually closes
+            while True:
+                await asyncio.sleep(30)
+                if ws.is_closed():
+                    break
+        except Exception:
             pass
 
         logger.warning("⚠️  WebSocket closed")
@@ -381,6 +397,14 @@ class TickProxy:
             # Start sentiment capture loop (every 10 seconds)
             sentiment_task = asyncio.create_task(self._sentiment_loop(page))
             logger.info("📊 Sentiment capture started")
+            # Start asset rotation loop (every 120 seconds)
+            rotation_task = asyncio.create_task(self._asset_rotation_loop(page))
+            logger.info("🔄 Asset rotation started")
+            # Initialize trade executor
+            global _trade_executor
+            _trade_executor = TradeExecutor(page)
+            asyncio.create_task(start_http_server())
+            logger.info("Trade executor ready on :8002")
 
             logger.info("🌐 Navigating to %s ...", TARGET_URL)
             try:
@@ -418,7 +442,127 @@ class TickProxy:
 
                 await asyncio.sleep(1)
 
+            rotation_task.cancel()
             await browser.close()
+
+    async def _asset_rotation_loop(self, page):
+        """Muda o ativo na interface a cada 2 minutos."""
+        import random
+        asset_index = 0
+        while True:
+            await asyncio.sleep(60)  # rotate every 60s (43 assets)
+            try:
+                asset = ASSETS[asset_index % len(ASSETS)]
+                asset_index += 1
+                # Tenta clicar no seletor de ativos e escolher o proximo
+                possible_selectors = [
+                    ".asset-selector",
+                    ".selected-asset",
+                    "[class*='current-asset']",
+                    ".h9gji",
+                ]
+                for sel in possible_selectors:
+                    elem = await page.query_selector(sel)
+                    if elem:
+                        await elem.click()
+                        await asyncio.sleep(1)
+                        break
+                # Tenta clicar no texto do ativo
+                display_name = asset.replace("_otc", " (OTC)")
+                await page.click(f"text={display_name}", timeout=3000)
+                logger.info("🔄 Rotated asset to %s", asset)
+            except Exception as e:
+                logger.warning("Asset rotation failed: %s", e)
+
+
+# ── Trade Executor (recebe ordens da API e executa na Quotex) ────────────
+class TradeExecutor:
+    def __init__(self, page):
+        self.page = page
+        self.current_asset = None
+
+    async def switch_asset(self, target_asset_display: str):
+        if self.current_asset == target_asset_display:
+            return True
+        try:
+            # Clica no seletor de ativos (div que mostra o ativo atual)
+            btn = await self.page.query_selector("div.h9gji") or await self.page.query_selector("div.ifu_i")
+            if btn:
+                await btn.click()
+                await asyncio.sleep(0.8)
+            # Procura e clica no ativo desejado pelo texto
+            await self.page.click(f"text={target_asset_display}", timeout=5000)
+            await asyncio.sleep(1)
+            self.current_asset = target_asset_display
+            logger.info("Asset switched to %s", target_asset_display)
+            return True
+        except Exception as e:
+            logger.warning("Failed to switch asset: %s", e)
+            return False
+
+    async def execute_trade(self, data: dict) -> dict:
+        try:
+            asset_display = data.get("asset_display", "")
+            direction = data.get("direction", "")  # CALL or PUT
+            amount = str(data.get("amount", 100))
+
+            if direction not in ("CALL", "PUT"):
+                return {"error": "Invalid direction"}
+
+            if not await self.switch_asset(asset_display):
+                return {"error": "Failed to switch asset", "asset": asset_display}
+
+            # Preencher valor no input de investimento
+            amount_input = await self.page.query_selector("div.deal-amount-input input")
+            if amount_input:
+                await amount_input.click()
+                await asyncio.sleep(0.2)
+                # Limpa e preenche
+                await amount_input.fill("")
+                await amount_input.fill(amount)
+                await asyncio.sleep(0.5)
+
+            # Clicar CALL (Up) ou PUT (Down)
+            if direction == "CALL":
+                btn = await self.page.query_selector('button:has-text("Up")')
+            else:
+                btn = await self.page.query_selector('button:has-text("Down")')
+
+            if btn:
+                await btn.click()
+                logger.info("Trade executed: %s %s R$%s", asset_display, direction, amount)
+                return {"status": "executed", "asset": asset_display, "direction": direction}
+            return {"error": "Button not found for %s" % direction}
+        except Exception as e:
+            logger.error("Trade execution error: %s", e)
+            return {"error": str(e)}
+
+
+_trade_executor: TradeExecutor | None = None
+
+
+async def handle_trade(request):
+    global _trade_executor
+    if not _trade_executor:
+        return web.Response(status=503, text="Trade executor not ready")
+    try:
+        data = await request.json()
+        result = await _trade_executor.execute_trade(data)
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def start_http_server():
+    app = web.Application()
+    app.router.add_post("/trade", handle_trade)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "localhost", 8002)
+    await site.start()
+    logger.info("Trade execution HTTP server running on http://localhost:8002")
+    while True:
+        await asyncio.sleep(3600)
 
 
 async def main():

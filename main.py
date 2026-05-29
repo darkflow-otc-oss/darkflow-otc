@@ -13,6 +13,7 @@ from patterns.detectors.pattern_pipeline import PatternPipeline
 import uvicorn
 import logging
 import asyncio
+import httpx
 import json
 import os
 import re
@@ -416,6 +417,57 @@ class SignalEngine:
         )
         return signal
 
+# ── Auto Trade Execution (via ws_proxy HTTP server) ───────────────────────
+WS_PROXY_TRADE_URL = "http://localhost:8002/trade"
+
+ASSET_DISPLAY_MAP = {
+    "BTCUSD_otc": "Bitcoin (OTC)", "BCHUSD_otc": "Bitcoin Cash (OTC)",
+    "ETHUSD_otc": "Ethereum (OTC)", "EURUSD_otc": "EUR/USD (OTC)",
+    "LTCUSD_otc": "Litecoin (OTC)", "EURCAD_otc": "EUR/CAD (OTC)",
+    "USDDZD_otc": "USD/DZD (OTC)", "AUDJPY_otc": "AUD/JPY (OTC)",
+    "USDCHF_otc": "USD/CHF (OTC)", "USDCOP_otc": "USD/COP (OTC)",
+    "EURAUD_otc": "EUR/AUD (OTC)", "GBPJPY_otc": "GBP/JPY (OTC)",
+    "GBPNZD_otc": "GBP/NZD (OTC)", "NZDUSD_otc": "NZD/USD (OTC)",
+    "AUDCHF_otc": "AUD/CHF (OTC)", "AUDUSD_otc": "AUD/USD (OTC)",
+    "USDINR_otc": "USD/INR (OTC)", "USDCAD_otc": "USD/CAD (OTC)",
+    "USDPKR_otc": "USD/PKR (OTC)", "GBPAUD_otc": "GBP/AUD (OTC)",
+    "GBPCAD_otc": "GBP/CAD (OTC)", "NZDCHF_otc": "NZD/CHF (OTC)",
+    "USDARS_otc": "USD/ARS (OTC)", "USDMXN_otc": "USD/MXN (OTC)",
+    "USDEGP_otc": "USD/EGP (OTC)", "AUDCAD_otc": "AUD/CAD (OTC)",
+    "EURCHF_otc": "EUR/CHF (OTC)", "EURGBP_otc": "EUR/GBP (OTC)",
+    "EURJPY_otc": "EUR/JPY (OTC)", "NZDCAD_otc": "NZD/CAD (OTC)",
+    "NZDJPY_otc": "NZD/JPY (OTC)", "USDBDT_otc": "USD/BDT (OTC)",
+    "USDIDR_otc": "USD/IDR (OTC)", "USDJPY_otc": "USD/JPY (OTC)",
+    "USDNGN_otc": "USD/NGN (OTC)", "USDPHP_otc": "USD/PHP (OTC)",
+    "KRAUDNZD_otc": "AUD/NZD (OTC)", "CADCHF_otc": "CAD/CHF (OTC)",
+    "GBPCHF_otc": "GBP/CHF (OTC)", "CADJPY_otc": "CAD/JPY (OTC)",
+    "USDZAR_otc": "USD/ZAR (OTC)", "GBPUSD_otc": "GBP/USD (OTC)",
+    "REURNZD_otc": "EUR/NZD (OTC)",
+}
+
+
+async def execute_trade_via_proxy(signal: dict):
+    """Envia ordem para o ws_proxy executar trade automaticamente na Quotex."""
+    asset = signal.get("asset", "")
+    asset_display = ASSET_DISPLAY_MAP.get(asset, asset.replace("_otc", "-OTC"))
+    direction = "CALL" if signal.get("action") == "COMPRA" else "PUT"
+    payload = {
+        "asset_display": asset_display,
+        "direction": direction,
+        "amount": 100,
+        "duration": signal.get("duration_minutes", 5),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(WS_PROXY_TRADE_URL, json=payload)
+            if resp.status_code == 200:
+                logger.info("Trade order sent to ws_proxy: %s %s R$100 %dmin", asset_display, direction, payload["duration"])
+            else:
+                logger.warning("Trade order failed: %s", resp.text)
+    except Exception as e:
+        logger.error("Failed to send trade order: %s", e)
+
+
 # ── GAIN/LOSS checker (background task per signal) ────────────────────────────
 async def _check_gain_loss(sig_id: int, asset: str, delay: int = 300):
     """Wait candle_duration seconds, then check real price and send GAIN/LOSS."""
@@ -449,6 +501,9 @@ async def _broadcast_consumer():
             if signal:
                 manager.last_signal = signal
                 await manager.broadcast(signal)
+
+                # ── Auto trade execution (R$100 na Quotex) ──
+                asyncio.create_task(execute_trade_via_proxy(signal))
 
                 # ── Telegram notification ──
                 if telegram_notifier:
