@@ -350,8 +350,8 @@ class SignalEngine:
         confidence = round(result.get("confidence", 0), 4)
 
         # ── Quality Filter ──
-        # COMPRA (CALL): >= 88% (0% win rate abaixo disso)
-        # VENDA (PUT): strong_momentum/pullback >= 75%, demais >= 80%
+        # COMPRA (CALL): >= 88%
+        # VENDA (PUT): todos os padroes >= 70%
         raw_signal = result.get("signal", "")
         if raw_signal == "CALL":
             if confidence < 0.88:
