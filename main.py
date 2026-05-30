@@ -246,7 +246,7 @@ class SignalEngine:
         self.signal_count = 0
         self._last_pattern: str | None = None
         self._last_signal_ts: float = 0.0
-        self._cooldown_secs: float = 30.0
+        self._cooldown_secs: float = 600.0  # 10 minutos entre sinais do mesmo padrao
 
         # Backtest-validated accuracy per pattern (best window)
         self._backtest_accuracy: dict[str, float] = {
@@ -350,23 +350,18 @@ class SignalEngine:
 
         confidence = round(result.get("confidence", 0), 4)
 
-        # ── Quality Filter ──
-        # CALL >= 80% | PUT forte >= 75% | PUT outros >= 72%
+        # ── Quality Filter ── minimo 85% para todos os sinais
         raw_signal = result.get("signal", "")
-        if raw_signal == "CALL":
-            if confidence < 0.80:
-                return None
-        elif pattern_key in ("strong_momentum", "pullback_continuation", "wick_rejection"):
-            if confidence < 0.75:
-                return None
-        else:
-            if confidence < 0.72:
-                return None
+        if confidence < 0.85:
+            return None
 
         # ── Trend Filter ──
         trend_bias = self._compute_trend_bias()
         allow_counter = os.getenv("ALLOW_COUNTER_TREND", "false").lower() == "true"
-        if not allow_counter and trend_bias != "NEUTRAL":
+        if trend_bias == "NEUTRAL":
+            logger.info("🛑 Trend NEUTRAL — sinal bloqueado (exige tendencia confirmada)")
+            return None
+        if not allow_counter:
             if trend_bias == "DOWN" and raw_signal == "CALL":
                 logger.info(
                     "🛑 Trend filter: blocking COMPRA in DOWN trend | confidence=%.2f%%",
