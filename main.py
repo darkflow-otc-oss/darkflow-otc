@@ -350,17 +350,16 @@ class SignalEngine:
         confidence = round(result.get("confidence", 0), 4)
 
         # ── Quality Filter ──
-        # COMPRA (CALL): >= 88%
-        # VENDA (PUT): todos os padroes >= 70%
+        # CALL >= 80% | PUT forte >= 75% | PUT outros >= 72%
         raw_signal = result.get("signal", "")
         if raw_signal == "CALL":
-            if confidence < 0.88:
+            if confidence < 0.80:
                 return None
-        elif pattern_key in ("strong_momentum", "pullback_continuation"):
-            if confidence < 0.70:
+        elif pattern_key in ("strong_momentum", "pullback_continuation", "wick_rejection"):
+            if confidence < 0.75:
                 return None
         else:
-            if confidence < 0.70:
+            if confidence < 0.72:
                 return None
 
         # ── Trend Filter ──
