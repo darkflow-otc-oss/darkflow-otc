@@ -48,7 +48,7 @@ fi
 # ──────────────────────────────────────────────────────
 # 3. Check ws_proxy by process existence AND log mtime
 # ──────────────────────────────────────────────────────
-WS_PID=$(pgrep -f "ws_proxy.py" 2>/dev/null || true)
+WS_PID=$(pgrep -f "ws_proxy.py" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
 WS_LOG_FILE=""
 if [ -f "$WS_LOG" ]; then
     WS_LOG_FILE="$WS_LOG"
