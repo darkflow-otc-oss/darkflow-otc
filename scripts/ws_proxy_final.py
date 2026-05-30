@@ -161,6 +161,17 @@ async def run():
                 _executor = do_trade
 
                 await page.goto("https://qxbroker.com/en/trade", wait_until='domcontentloaded', timeout=60000)
+                # Injeta localStorage e recarrega para forcar a Quotex a reconhecer
+                await page.evaluate(f"""(() => {{
+                    ['selected-asset','currentAsset','activeAsset','tradeAsset','selectedSymbol'].forEach(
+                        k => localStorage.setItem(k, '{ASSET}'));
+                    window.dispatchEvent(new StorageEvent('storage', {{key:'selected-asset',newValue:'{ASSET}'}}));
+                }})()""")
+                await page.reload(wait_until='domcontentloaded')
+                await page.evaluate(f"""(() => {{
+                    ['selected-asset','currentAsset','activeAsset','tradeAsset','selectedSymbol'].forEach(
+                        k => localStorage.setItem(k, '{ASSET}'));
+                }})()""")
                 await select_asset(page)
                 logger.info("Aguardando ticks...")
                 while True: await asyncio.sleep(2)
