@@ -477,7 +477,10 @@ async def _check_gain_loss(sig_id: int, asset: str, delay: int = 300):
         logger.warning("GainLoss #%d: no price for %s — skipping", sig_id, asset)
         return
     if telegram_notifier:
-        await telegram_notifier.send_gain_loss(sig_id, exit_price)
+        result = await telegram_notifier.send_gain_loss(sig_id, exit_price)
+        # Broadcast result to all WebSocket clients (SIGNAL MINER dashboard)
+        if result:
+            await manager.broadcast(result)
 
 
 # ── Broadcast Consumer ───────────────────────────────────────────────────────
