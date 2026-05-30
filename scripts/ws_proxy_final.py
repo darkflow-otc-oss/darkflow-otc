@@ -90,32 +90,43 @@ async def sentiment_loop(page):
         except: pass
 
 async def select_asset(page):
-    """Tenta selecionar o ativo via JavaScript no localStorage e clique no seletor."""
+    """Seleciona o ativo clicando no elemento .rKkq0 correspondente na barra lateral."""
+    # Mapeia formato interno -> termo de busca na UI da Quotex
+    SEARCH_TERMS = {
+        "BTCUSD_otc": "Bitcoin (OTC)",
+        "BCHUSD_otc": "Bitcoin Cash (OTC)",
+        "ETHUSD_otc": "Ethereum (OTC)",
+        "EURUSD_otc": "EUR/USD (OTC)",
+        "GBPUSD_otc": "GBP/USD (OTC)",
+        "USDJPY_otc": "USD/JPY (OTC)",
+        "TRUMPUSD_otc": "TRUMP/USD (OTC)",
+        "LTCUSD_otc": "Litecoin (OTC)",
+        "AVAUSD_otc": "Avalanche (OTC)",
+    }
+    search = SEARCH_TERMS.get(ASSET, ASSET.replace('_otc', '').replace('USD', '/USD') + ' (OTC)')
     try:
-        await page.evaluate(f"""
-            localStorage.setItem('selected-asset', '{ASSET}');
-            localStorage.setItem('currentAsset', '{ASSET}');
-        """)
-        logger.info(f"localStorage definido para {ASSET}")
-        await asyncio.sleep(3)
-        dropdowns = await page.query_selector_all('[class*="asset"], [class*="pair"], .asset-select, .pair-name')
-        for dropdown in dropdowns:
-            try:
-                await dropdown.click()
-                await asyncio.sleep(1)
-                break
-            except: continue
-        asset_base = ASSET.replace('_otc','').replace('USD','')
-        items = await page.query_selector_all('[class*="option"], [class*="asset-item"], li, .pPomf, .rKkq0')
+        # Abre a barra lateral clicando no ativo atual
+        opener = await page.query_selector('div.h9gji') or await page.query_selector('div.ifu_i')
+        if opener:
+            await opener.click()
+            await asyncio.sleep(1)
+        # Aguarda os itens .rKkq0 aparecerem
+        for _ in range(10):
+            items = await page.query_selector_all('.rKkq0')
+            if items: break
+            await asyncio.sleep(1)
+        # Clica no item .rKkq0 que contem o texto do ativo
         for item in items:
             try:
                 txt = await item.inner_text()
-                if asset_base.lower() in txt.lower() or ASSET.lower() in txt.lower():
+                if search.lower() in txt.lower():
                     await item.click()
-                    logger.info(f"✅ Ativo {ASSET} selecionado via clique em '{txt.strip()}'")
+                    logger.info(f"✅ Ativo selecionado: {txt.strip()}")
                     return True
             except: continue
-        logger.info("Dropdown nao encontrado — aguardando selecao manual")
+        # Fallback: tenta localStorage + reload
+        await page.evaluate(f"['selected-asset','currentAsset'].forEach(k => localStorage.setItem(k, '{ASSET}'))")
+        logger.info("Ativo nao encontrado na barra lateral — aguardando selecao manual")
     except Exception as e:
         logger.warning(f"select_asset: {e}")
     return False
