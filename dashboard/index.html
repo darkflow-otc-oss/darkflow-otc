@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SIGNAL MINER :: HACKING QUOTEX</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#000;color:#00ff41;font-family:'Share Tech Mono',monospace;min-height:100vh;padding:12px;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,65,0.015) 2px,rgba(0,255,65,0.015) 4px);pointer-events:none;z-index:0}
+.sm-header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #00ff4130;padding-bottom:8px;margin-bottom:10px;position:relative;z-index:1}
+.sm-title{font-size:20px;color:#00ff41;letter-spacing:4px;text-transform:uppercase}
+.sm-title span{color:#ff2d2d}
+.sm-status{font-size:11px;color:#00ff41aa;display:flex;gap:16px}
+.sm-blink{animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.sm-grid{display:grid;grid-template-columns:1fr 300px;gap:10px;position:relative;z-index:1}
+@media(max-width:700px){.sm-grid{grid-template-columns:1fr}}
+.sm-matrix{height:420px;overflow:hidden;position:relative;border:1px solid #00ff4125}
+.sm-col-wrap{display:flex;gap:0;height:100%}
+.col-stream{flex:1;overflow:hidden;position:relative;border-right:1px solid #00ff4110;padding:2px 3px}
+.col-stream:last-child{border-right:none}
+.num{display:block;font-size:11px;line-height:1.4;color:#00ff4155;white-space:nowrap;overflow:hidden;transition:color 0.3s}
+.num.hot{color:#00ff41;text-shadow:0 0 4px #00ff41}
+.num.signal-put{color:#ff2d2d;background:#ff2d2d15;font-weight:bold;animation:pulse-red 0.5s ease}
+.num.signal-call{color:#00d4ff;background:#00d4ff10;font-weight:bold;animation:pulse-blue 0.5s ease}
+@keyframes pulse-red{0%{background:#ff2d2d50}100%{background:#ff2d2d10}}
+@keyframes pulse-blue{0%{background:#00d4ff50}100%{background:#00d4ff10}}
+.sm-panel{display:flex;flex-direction:column;gap:8px}
+.sm-card{border:1px solid #00ff4130;padding:8px 10px;background:#000;position:relative}
+.sm-card-title{font-size:10px;color:#00ff4188;letter-spacing:2px;margin-bottom:6px;text-transform:uppercase}
+.sm-stat{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+.sm-stat .val{color:#00ff41}
+.sm-stat .val.red{color:#ff2d2d}
+.sm-stat .val.cyan{color:#00d4ff}
+.sm-stat .val.yellow{color:#ffd700}
+.sm-stat .lbl{color:#00ff4166}
+.alert-box{border:1px solid #ff2d2d;background:#ff2d2d08;padding:10px;display:none}
+.alert-box.show{display:block;animation:alert-in 0.3s ease}
+@keyframes alert-in{0%{opacity:0;transform:translateY(-4px)}100%{opacity:1;transform:none}}
+.alert-title{color:#ff2d2d;font-size:11px;letter-spacing:2px;margin-bottom:4px}
+.alert-asset{font-size:18px;color:#fff;letter-spacing:1px}
+.alert-dir.put{color:#ff2d2d;font-size:14px;margin-top:3px}
+.alert-dir.call{color:#00d4ff;font-size:14px;margin-top:3px}
+.alert-conf{font-size:11px;color:#00ff4188;margin-top:3px}
+.sm-feed{border:1px solid #00ff4120;height:180px;overflow-y:auto;padding:4px 6px}
+.sm-feed::-webkit-scrollbar{width:3px}
+.sm-feed::-webkit-scrollbar-thumb{background:#00ff4133}
+.feed-item{font-size:10px;line-height:1.7;border-bottom:1px solid #00ff4110;padding:1px 0;color:#00ff4188}
+.feed-item .ts{color:#00ff4144}
+.feed-item .sig{color:#ffd700}
+.feed-item .gain{color:#00ff41}
+.feed-item .loss{color:#ff2d2d}
+.scan-line{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#00ff4130,transparent);animation:scan 4s linear infinite;pointer-events:none}
+@keyframes scan{0%{top:-2px}100%{top:100%}}
+.corner{position:absolute;width:12px;height:12px;border-color:#00ff4155}
+.corner.tl{top:0;left:0;border-top:1px solid;border-left:1px solid}
+.corner.tr{top:0;right:0;border-top:1px solid;border-right:1px solid}
+.corner.bl{bottom:0;left:0;border-bottom:1px solid;border-left:1px solid}
+.corner.br{bottom:0;right:0;border-bottom:1px solid;border-right:1px solid}
+.sm-ticker{font-size:10px;color:#00ff4144;overflow:hidden;white-space:nowrap;border-top:1px solid #00ff4115;padding-top:6px;margin-top:8px;position:relative;z-index:1}
+.ticker-inner{display:inline-block;animation:ticker 40s linear infinite}
+@keyframes ticker{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.ws-dot{width:7px;height:7px;border-radius:50%;background:#ff2d2d;display:inline-block;margin-right:5px;vertical-align:middle}
+.ws-dot.connected{background:#00ff41;box-shadow:0 0 6px #00ff41}
+.price-bar{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid #00ff4110;color:#00ff4188}
+.price-bar .price{color:#00ff41;font-size:13px}
+</style>
+</head>
+<body>
+<div class="sm-header">
+  <div class="sm-title">SIGNAL <span>MINER</span> :: HACKING QUOTEX</div>
+  <div class="sm-status">
+    <span><span class="ws-dot" id="ws-dot"></span><span id="ws-status">CONNECTING</span></span>
+    <span class="sm-blink" id="intercept-label">[ INTERCEPTING ]</span>
+    <span id="sm-time">00:00:00</span>
+  </div>
+</div>
+
+<div class="sm-grid">
+  <div class="sm-matrix">
+    <div class="corner tl"></div><div class="corner tr"></div>
+    <div class="corner bl"></div><div class="corner br"></div>
+    <div class="scan-line"></div>
+    <div class="sm-col-wrap" id="col-wrap"></div>
+  </div>
+
+  <div class="sm-panel">
+    <div class="alert-box" id="alert-box">
+      <div class="alert-title sm-blink">[ SIGNAL DETECTED ]</div>
+      <div class="alert-asset" id="alert-asset">--</div>
+      <div class="alert-dir" id="alert-dir">--</div>
+      <div class="alert-conf" id="alert-conf">aguardando...</div>
+    </div>
+
+    <div class="sm-card">
+      <div class="sm-card-title">:: live metrics</div>
+      <div class="sm-stat"><span class="lbl">ticks recebidos</span><span class="val" id="m-ticks">0</span></div>
+      <div class="sm-stat"><span class="lbl">sinais gerados</span><span class="val yellow" id="m-sig">0</span></div>
+      <div class="sm-stat"><span class="lbl">assets ativos</span><span class="val cyan" id="m-assets">0</span></div>
+      <div class="sm-stat"><span class="lbl">win rate</span><span class="val" id="m-wr">--%</span></div>
+      <div class="sm-stat"><span class="lbl">net P&L</span><span class="val" id="m-pnl">R$0</span></div>
+    </div>
+
+    <div class="sm-card">
+      <div class="sm-card-title">:: precos ao vivo</div>
+      <div id="price-list">
+        <div class="price-bar"><span>aguardando feed...</span></div>
+      </div>
+    </div>
+
+    <div class="sm-card">
+      <div class="sm-card-title">:: ultimos resultados</div>
+      <div id="results-list">
+        <div class="sm-stat"><span class="lbl">--</span><span class="val" style="color:#00ff4144">aguardando...</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sm-card-title" style="margin-top:8px;position:relative;z-index:1">:: signal feed</div>
+<div class="sm-feed" id="sm-feed">
+  <div class="feed-item"><span class="ts">[INIT]</span> <span class="sig">SIGNAL MINER v2.0 — CONECTANDO AO DARKFLOW OTC...</span></div>
+</div>
+
+<div class="sm-ticker">
+  <div class="ticker-inner" id="ticker-inner">DARKFLOW OTC :: SIGNAL MINER :: HACKING QUOTEX :: INTERCEPTANDO WEBSOCKET :: PATTERN ENGINE ATIVO :: SENTIMENT MULTIPLIER :: TREND FILTER :: AUTO-TRADE R$100 :: DARKFLOW OTC :: SIGNAL MINER :: HACKING QUOTEX :: INTERCEPTANDO WEBSOCKET :: PATTERN ENGINE ATIVO :: SENTIMENT MULTIPLIER :: TREND FILTER :: AUTO-TRADE R$100 ::&nbsp;</div>
+</div>
+
+<script>
+const COLS=12, ROWS=52;
+const cols=[];
+const wrap=document.getElementById('col-wrap');
+for(let c=0;c<COLS;c++){
+  const div=document.createElement('div');
+  div.className='col-stream';
+  const nums=[];
+  for(let r=0;r<ROWS;r++){
+    const s=document.createElement('span');
+    s.className='num';
+    s.textContent=rnd();
+    div.appendChild(s);
+    nums.push(s);
+  }
+  wrap.appendChild(div);
+  cols.push(nums);
+}
+
+function rnd(){
+  const t=Math.random();
+  if(t<0.3) return (Math.random()*99999|0).toString().padStart(5,'0');
+  if(t<0.6) return (Math.random()).toFixed(5).replace('0.','');
+  return (Math.random()*9.9999).toFixed(4);
+}
+
+let tickCount=0, sigCount=0, gain=0, loss=0;
+const prices={}, assets=new Set();
+
+function updateMatrix(){
+  cols.forEach(nums=>{
+    const n=2+Math.random()*4|0;
+    for(let i=0;i<n;i++){
+      const ri=Math.random()*ROWS|0;
+      const el=nums[ri];
+      el.textContent=rnd();
+      el.classList.remove('hot','signal-put','signal-call');
+      if(Math.random()<0.03) el.classList.add('hot');
+    }
+  });
+}
+
+function flashSignal(isCall){
+  const ci=Math.random()*COLS|0;
+  const ri=Math.random()*ROWS|0;
+  const el=cols[ci][ri];
+  el.classList.add(isCall?'signal-call':'signal-put');
+  setTimeout(()=>{el.classList.remove('signal-call','signal-put')},4000);
+}
+
+function addFeed(html){
+  const feed=document.getElementById('sm-feed');
+  const item=document.createElement('div');
+  item.className='feed-item';
+  item.innerHTML=html;
+  feed.insertBefore(item,feed.firstChild);
+  while(feed.children.length>60) feed.removeChild(feed.lastChild);
+}
+
+function ts(){
+  return new Date().toTimeString().slice(0,8);
+}
+
+function updatePrices(){
+  const el=document.getElementById('price-list');
+  const entries=Object.entries(prices).slice(0,5);
+  if(!entries.length){el.innerHTML='<div class="price-bar"><span>aguardando feed...</span></div>';return;}
+  el.innerHTML=entries.map(([a,p])=>`<div class="price-bar"><span>${a.replace('_otc','')}</span><span class="price">${parseFloat(p).toFixed(4)}</span></div>`).join('');
+}
+
+function updateMetrics(){
+  document.getElementById('m-ticks').textContent=tickCount.toLocaleString();
+  document.getElementById('m-assets').textContent=assets.size;
+  const total=gain+loss;
+  const wr=total>0?Math.round(gain/total*100):0;
+  document.getElementById('m-wr').textContent=total>0?wr+'%':'--%';
+  document.getElementById('m-wr').style.color=wr>=55?'#00ff41':wr>=50?'#ffd700':'#ff2d2d';
+  const pnl=gain*85-loss*100;
+  document.getElementById('m-pnl').textContent=(pnl>=0?'+':'')+`R$${pnl}`;
+  document.getElementById('m-pnl').style.color=pnl>=0?'#00ff41':'#ff2d2d';
+  document.getElementById('m-sig').textContent=sigCount;
+}
+
+const results=[];
+function addResult(asset,dir,won){
+  results.unshift({asset,dir,won});
+  if(results.length>5) results.pop();
+  document.getElementById('results-list').innerHTML=results.map(r=>
+    `<div class="sm-stat"><span class="lbl">${r.asset.replace('_otc','')}</span><span class="val ${r.won?'':'red'}">${r.won?'+R$85':'-R$100'}</span></div>`
+  ).join('');
+}
+
+function connectWS(){
+  const wsUrl=`ws://${location.host}/ws`;
+  const dot=document.getElementById('ws-dot');
+  const status=document.getElementById('ws-status');
+  addFeed(`<span class="ts">[${ts()}]</span> Conectando a ${wsUrl}...`);
+
+  const ws=new WebSocket(wsUrl);
+
+  ws.onopen=()=>{
+    dot.classList.add('connected');
+    status.textContent='CONNECTED';
+    addFeed(`<span class="ts">[${ts()}]</span> <span class="sig">WebSocket conectado :: DARKFLOW OTC API</span>`);
+  };
+
+  ws.onmessage=(e)=>{
+    try{
+      const d=JSON.parse(e.data);
+      if(d.type==='tick'){
+        tickCount++;
+        if(d.asset) assets.add(d.asset);
+        if(d.asset && d.price) prices[d.asset]=d.price;
+        updateMatrix();
+        if(tickCount%50===0) updatePrices();
+        if(tickCount%10===0) updateMetrics();
+      } else if(d.type==='signal'){
+        sigCount++;
+        const isCall=d.action==='COMPRA';
+        flashSignal(isCall);
+        const box=document.getElementById('alert-box');
+        document.getElementById('alert-asset').textContent=d.asset||'--';
+        const dirEl=document.getElementById('alert-dir');
+        dirEl.textContent=isCall?'COMPRA CALL':'VENDA PUT';
+        dirEl.className='alert-dir '+(isCall?'call':'put');
+        document.getElementById('alert-conf').textContent=
+          `conf: ${(d.confidence*100).toFixed(1)}% | adj: ${((d.adjusted_confidence||d.confidence)*100).toFixed(1)}% | ${d.pattern||''} | ${d.trend_bias||'--'}`;
+        box.classList.add('show');
+        setTimeout(()=>box.classList.remove('show'),8000);
+        addFeed(`<span class="ts">[${ts()}]</span> <span class="sig">SIGNAL #${sigCount}</span> ${isCall?'<span style="color:#00d4ff">COMPRA</span>':'<span style="color:#ff2d2d">VENDA</span>'} ${d.asset} | ${d.pattern} | conf ${(d.confidence*100).toFixed(1)}%`);
+        updateMetrics();
+      } else if(d.type==='result'){
+        const won=d.result==='GAIN';
+        if(won) gain++; else loss++;
+        addResult(d.asset,d.direction,won);
+        addFeed(`<span class="ts">[${ts()}]</span> <span class="${won?'gain':'loss'}">${won?'GAIN +R$85':'LOSS -R$100'}</span> :: ${d.asset}`);
+        updateMetrics();
+      }
+    } catch(err){}
+  };
+
+  ws.onclose=()=>{
+    dot.classList.remove('connected');
+    status.textContent='RECONNECTING';
+    addFeed(`<span class="ts">[${ts()}]</span> Conexao perdida — reconectando em 3s...`);
+    setTimeout(connectWS,3000);
+  };
+
+  ws.onerror=()=>{
+    status.textContent='ERROR';
+    dot.classList.remove('connected');
+  };
+}
+
+setInterval(updateMatrix,150);
+setInterval(()=>document.getElementById('sm-time').textContent=ts(),1000);
+connectWS();
+</script>
+</body>
+</html>

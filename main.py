@@ -7,6 +7,7 @@ FastAPI + WebSocket + MCP Orchestration
 from collections import deque
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from api.routes import candles, patterns, risk
 from patterns.detectors.pattern_pipeline import PatternPipeline
@@ -594,6 +595,9 @@ app.add_middleware(
 app.include_router(candles.router)
 app.include_router(patterns.router)
 app.include_router(risk.router)
+
+# Serve SIGNAL MINER dashboard
+app.mount("/dashboard", StaticFiles(directory="dashboard", html=True), name="dashboard")
 
 
 # ── Health Check ───────────────────────────────────────────────────────────────
