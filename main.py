@@ -480,6 +480,7 @@ async def _check_gain_loss(sig_id: int, asset: str, delay: int = 300):
         result = await telegram_notifier.send_gain_loss(sig_id, exit_price)
         # Broadcast result to all WebSocket clients (SIGNAL MINER dashboard)
         if result:
+            result["type"] = "result"
             await manager.broadcast(result)
 
 

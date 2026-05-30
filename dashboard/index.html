@@ -263,7 +263,7 @@ function connectWS(){
       } else if(d.type==='result'){
         const won=d.result==='GAIN';
         if(won) gain++; else loss++;
-        addResult(d.asset,d.direction,won);
+        addResult(d.asset,d.action,won);
         addFeed(`<span class="ts">[${ts()}]</span> <span class="${won?'gain':'loss'}">${won?'GAIN +R$85':'LOSS -R$100'}</span> :: ${d.asset}`);
         updateMetrics();
       }
