@@ -19,3 +19,9 @@ if ! docker ps | grep -q darkflow_api; then
     echo "$(date) - API parada — reiniciando" >> "$LOG"
     cd /home/magnumbrokeroficial/darkflow_otc && docker compose up -d
 fi
+
+# Verifica se o tunnel cloudflared esta vivo
+if ! pgrep -f "cloudflared tunnel" > /dev/null; then
+    echo "$(date) - cloudflared morto — reiniciando" >> "$LOG"
+    nohup cloudflared tunnel run b0b1038c-b433-4543-947c-8d51ab4da7bd > /tmp/cloudflared.log 2>&1 &
+fi
