@@ -67,9 +67,36 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 .ws-dot.connected{background:#00ff41;box-shadow:0 0 6px #00ff41}
 .price-bar{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid #00ff4110;color:#00ff4188}
 .price-bar .price{color:#00ff41;font-size:13px}
+#active-signal{border:2px solid #00ff4120;padding:10px 14px;margin-bottom:10px;position:relative;z-index:1}
+#active-signal.blink-call{animation:blink-call 0.6s step-end infinite}
+#active-signal.blink-put{animation:blink-put 0.6s step-end infinite}
+@keyframes blink-call{50%{border-color:#00d4ff;box-shadow:0 0 8px #00d4ff40}}
+@keyframes blink-put{50%{border-color:#ff2d2d;box-shadow:0 0 8px #ff2d2d40}}
+#active-signal.done{border-color:#00ff4150;animation:none}
+.as-title{font-size:10px;color:#00ff4188;letter-spacing:2px}
+.as-asset{font-size:16px;color:#fff}
+.as-dir.call{color:#00d4ff}
+.as-dir.put{color:#ff2d2d}
+.as-badge{display:inline-block;padding:2px 8px;font-size:11px;font-weight:bold;margin-top:4px}
+.as-badge.gain{background:#00ff4120;color:#00ff41}
+.as-badge.loss{background:#ff2d2d20;color:#ff2d2d}
+.as-badge.pending{background:#ffd70020;color:#ffd700}
+#hist-table{width:100%;border-collapse:collapse;font-size:10px;position:relative;z-index:1;margin-top:8px}
+#hist-table th{color:#00ff4188;text-align:left;padding:3px 5px;border-bottom:1px solid #00ff4120}
+#hist-table td{color:#00ff41aa;padding:2px 5px;border-bottom:1px solid #00ff4108}
+#hist-table td.call{color:#00d4ff}
+#hist-table td.put{color:#ff2d2d}
+#hist-table td.gain{color:#00ff41}
+#hist-table td.loss{color:#ff2d2d}
 </style>
 </head>
 <body>
+<div id="active-signal">
+  <div class="as-title">[ ULTIMO SINAL ]</div>
+  <div class="as-asset" id="as-asset">--</div>
+  <div class="as-dir" id="as-dir">AGUARDANDO...</div>
+  <div id="as-badge" class="as-badge pending">PENDING</div>
+</div>
 <div class="sm-header">
   <div class="sm-title">SIGNAL <span>MINER</span> :: HACKING QUOTEX</div>
   <div class="sm-status">
@@ -125,6 +152,12 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
   <div class="feed-item"><span class="ts">[INIT]</span> <span class="sig">SIGNAL MINER v2.0 — CONECTANDO AO DARKFLOW OTC...</span></div>
 </div>
 
+<div class="sm-card-title" style="margin-top:8px;position:relative;z-index:1">:: signal history</div>
+<table id="hist-table">
+  <thead><tr><th>#</th><th>Hora</th><th>Ativo</th><th>Direcao</th><th>Padrao</th><th>Conf</th><th>Adj</th><th>Resultado</th></tr></thead>
+  <tbody id="hist-tbody"><tr><td colspan="8" style="color:#00ff4144">aguardando sinais...</td></tr></tbody>
+</table>
+
 <div class="sm-ticker">
   <div class="ticker-inner" id="ticker-inner">DARKFLOW OTC :: SIGNAL MINER :: HACKING QUOTEX :: INTERCEPTANDO WEBSOCKET :: PATTERN ENGINE ATIVO :: SENTIMENT MULTIPLIER :: TREND FILTER :: AUTO-TRADE R$100 :: DARKFLOW OTC :: SIGNAL MINER :: HACKING QUOTEX :: INTERCEPTANDO WEBSOCKET :: PATTERN ENGINE ATIVO :: SENTIMENT MULTIPLIER :: TREND FILTER :: AUTO-TRADE R$100 ::&nbsp;</div>
 </div>
@@ -157,6 +190,8 @@ function rnd(){
 
 let tickCount=0, sigCount=0, gain=0, loss=0;
 const prices={}, assets=new Set();
+const signals=[];
+let activeSignalId=null;
 
 function updateMatrix(){
   cols.forEach(nums=>{
@@ -221,6 +256,55 @@ function addResult(asset,dir,won){
   ).join('');
 }
 
+function showActiveSignal(d){
+  const isCall=d.action==='COMPRA';
+  const el=document.getElementById('active-signal');
+  const sid=sigCount+1;
+  activeSignalId=sid;
+  document.getElementById('as-asset').textContent=d.asset||'--';
+  const dirEl=document.getElementById('as-dir');
+  dirEl.textContent=(isCall?'COMPRA':'VENDA')+' | '+(d.pattern||'')+' | '+(d.trend_bias||'--');
+  dirEl.className='as-dir '+(isCall?'call':'put');
+  const badge=document.getElementById('as-badge');
+  badge.textContent='PENDING';
+  badge.className='as-badge pending';
+  el.className=isCall?'blink-call':'blink-put';
+  // Store signal for history
+  signals.unshift({id:sid,time:ts(),asset:d.asset,action:d.action,pattern:d.pattern||'--',conf:((d.confidence||0)*100).toFixed(1),adj:(((d.adjusted_confidence||d.confidence||0))*100).toFixed(1),_result:null});
+  if(signals.length>100) signals.pop();
+  renderHistory();
+}
+
+function updateActiveResult(won){
+  const el=document.getElementById('active-signal');
+  el.classList.remove('blink-call','blink-put');
+  el.classList.add('done');
+  const badge=document.getElementById('as-badge');
+  badge.textContent=won?'GAIN':'LOSS';
+  badge.className='as-badge '+(won?'gain':'loss');
+  // Match to first pending signal
+  for(const s of signals){
+    if(s._result===null){s._result=won?'GAIN':'LOSS';break;}
+  }
+  renderHistory();
+}
+
+function renderHistory(){
+  const tbody=document.getElementById('hist-tbody');
+  if(!signals.length){tbody.innerHTML='<tr><td colspan="8" style="color:#00ff4144">aguardando sinais...</td></tr>';return;}
+  tbody.innerHTML=signals.slice(0,100).map(s=>{
+    const isCall=s.action==='COMPRA';
+    const rClass=s._result==='GAIN'?'gain':s._result==='LOSS'?'loss':'';
+    const rText=s._result||'--';
+    return `<tr>
+      <td>${s.id}</td><td>${s.time}</td><td>${s.asset.replace('_otc','')}</td>
+      <td class="${isCall?'call':'put'}">${s.action}</td><td>${s.pattern}</td>
+      <td>${s.conf}%</td><td>${s.adj}%</td>
+      <td class="${rClass}">${rText}</td>
+    </tr>`;
+  }).join('');
+}
+
 function connectWS(){
   const wsUrl=`ws://${location.host}/ws`;
   const dot=document.getElementById('ws-dot');
@@ -260,12 +344,14 @@ function connectWS(){
         setTimeout(()=>box.classList.remove('show'),8000);
         addFeed(`<span class="ts">[${ts()}]</span> <span class="sig">SIGNAL #${sigCount}</span> ${isCall?'<span style="color:#00d4ff">COMPRA</span>':'<span style="color:#ff2d2d">VENDA</span>'} ${d.asset} | ${d.pattern} | conf ${(d.confidence*100).toFixed(1)}%`);
         updateMetrics();
+        showActiveSignal(d);
       } else if(d.type==='result'){
         const won=d.result==='GAIN';
         if(won) gain++; else loss++;
         addResult(d.asset,d.action,won);
         addFeed(`<span class="ts">[${ts()}]</span> <span class="${won?'gain':'loss'}">${won?'GAIN +R$85':'LOSS -R$100'}</span> :: ${d.asset}`);
         updateMetrics();
+        updateActiveResult(won);
       }
     } catch(err){}
   };
