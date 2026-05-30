@@ -340,12 +340,10 @@ class SignalEngine:
         pattern_key = result.get("pattern_type", "unknown")
         now = time.monotonic()
 
-        # Cooldown: só emite se padrão mudou OU passaram 30s do mesmo padrão
-        if self._last_pattern is not None:
-            if pattern_key == self._last_pattern and (now - self._last_signal_ts) < self._cooldown_secs:
-                return None
+        # Cooldown global por ativo: max 1 sinal a cada 10min
+        if now - self._last_signal_ts < self._cooldown_secs:
+            return None
 
-        self._last_pattern = pattern_key
         self._last_signal_ts = now
 
         confidence = round(result.get("confidence", 0), 4)
