@@ -214,16 +214,6 @@ export default function RiscoQuotexPage() {
       </div>
 
       <div className="mt-8 border-t border-white/10 pt-6">
-        <h2 className="text-white text-lg mb-3">QUOTEX - Exposicao 3D</h2>
-        <iframe
-          src="/risk-3d.html"
-          className="w-full h-[500px] rounded-xl border border-white/10"
-          title="Risk 3D Quotex"
-        />
-        <p className="text-xs text-slate-500 mt-2 text-center">
-          Dados QUOTEX: exposicao real por horario (pico 18h-23h).
-        </p>
-      </div>
     </div>
   );
 }
