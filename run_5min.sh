@@ -1,20 +1,21 @@
 #!/bin/bash
-# DARKFLOW OTC - Script executado a cada 5 minutos
+LOG="/tmp/run_5min.log"
+echo "$(date) - health check" >> "$LOG"
 
-LOG_FILE="/tmp/run_5min.log"
+# Verifica se ws_proxy esta vivo E enviando ticks recentemente
+LAST_TICK=$(stat -c %Y /tmp/ws_proxy_new.log 2>/dev/null || stat -c %Y /tmp/ws_proxy.log 2>/dev/null || echo 0)
+NOW=$(date +%s)
+IDLE=$((NOW - LAST_TICK))
 
-echo "$(date) - Executando run_5min.sh" >> "$LOG_FILE"
-
-# Verificar ws_proxy e reiniciar se necessario
-if ! pgrep -f "ws_proxy.py" > /dev/null; then
-    echo "$(date) - ws_proxy parado, reiniciando..." >> "$LOG_FILE"
-    cd ~/darkflow_otc && nohup python3 scripts/ws_proxy.py > /tmp/ws_proxy.log 2>&1 &
+if ! pgrep -f "ws_proxy.py" > /dev/null || [ "$IDLE" -gt 120 ]; then
+    echo "$(date) - ws_proxy morto ou travado (idle ${IDLE}s) — reiniciando" >> "$LOG"
+    pkill -9 -f ws_proxy.py 2>/dev/null || true
+    sleep 2
+    cd /home/magnumbrokeroficial/darkflow_otc
+    PYTHONUNBUFFERED=1 nohup python3 -u scripts/ws_proxy.py > /tmp/ws_proxy_new.log 2>&1 &
 fi
 
-# Verificar containers
 if ! docker ps | grep -q darkflow_api; then
-    echo "$(date) - API parada, reiniciando..." >> "$LOG_FILE"
-    cd ~/darkflow_otc && docker compose up -d
+    echo "$(date) - API parada — reiniciando" >> "$LOG"
+    cd /home/magnumbrokeroficial/darkflow_otc && docker compose up -d
 fi
-
-echo "$(date) - Execucao concluida" >> "$LOG_FILE"
