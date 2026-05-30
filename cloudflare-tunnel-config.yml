@@ -1,0 +1,7 @@
+tunnel: b0b1038c-b433-4543-947c-8d51ab4da7bd
+credentials-file: /home/magnumbrokeroficial/.cloudflared/b0b1038c-b433-4543-947c-8d51ab4da7bd.json
+
+ingress:
+  - hostname: dashboard.murklogic.site
+    service: http://localhost:8000
+  - service: http_status:404
