@@ -124,9 +124,28 @@ async def select_asset(page):
                     logger.info(f"✅ Ativo selecionado: {txt.strip()}")
                     return True
             except: continue
-        # Fallback: tenta localStorage + reload
+        # Fallback: tenta busca pelo nome do ativo
+        logger.info("Ativo nao encontrado na barra lateral — tentando busca...")
+        try:
+            search_sel = await page.query_selector('input[placeholder*="Search"], input[type="search"], [class*="search"] input, [class*="Search"] input')
+            if search_sel:
+                await search_sel.click()
+                await search_sel.fill(search)
+                await asyncio.sleep(2)
+                results = await page.query_selector_all('.rKkq0, [class*="result"], [class*="item"]')
+                for r in results:
+                    txt = await r.inner_text()
+                    if search.lower() in txt.lower() or ASSET.replace('_otc','').lower() in txt.lower():
+                        await r.click()
+                        logger.info(f"✅ Ativo selecionado via busca: {txt.strip()}")
+                        return True
+                logger.info(f"Busca por '{search}' sem resultado")
+            else:
+                logger.info("Campo de busca nao encontrado")
+        except Exception as e2:
+            logger.warning(f"Busca falhou: {e2}")
+        # Ultimo fallback: localStorage
         await page.evaluate(f"['selected-asset','currentAsset'].forEach(k => localStorage.setItem(k, '{ASSET}'))")
-        logger.info("Ativo nao encontrado na barra lateral — aguardando selecao manual")
     except Exception as e:
         logger.warning(f"select_asset: {e}")
     return False
