@@ -28,7 +28,7 @@ ASSET_ALIASES = {
     "BCHUSD_otc": ["bchusd_otc","bchusd","bch/usd","bitcoin cash"],
     "EURUSD_otc": ["eurusd_otc","eurusd","eur/usd"],
     "USDJPY_otc": ["usdjpy_otc","usdjpy","usd/jpy"],
-    "TRUMPUSD_otc": ["trumpusd_otc","trumpusd","trump/usd","trump"],
+    "TRUMPUSD_otc": ["trumpusd_otc","trumpusd","trump/usd","trump","truusd_otc","truusd"],
     "GBPUSD_otc": ["gbpusd_otc","gbpusd","gbp/usd"],
     "AVAUSD_otc": ["avausd_otc","avausd","ava/usd","avalanche"],
 }
