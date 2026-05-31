@@ -473,11 +473,18 @@ class TickProxy:
                     search_input = page.locator('input[placeholder="Search"]').first
                     await search_input.wait_for(state="visible", timeout=5000)
                 except Exception:
+                    # Debug: screenshot para ver estado da página
+                    try:
+                        await page.screenshot(path="/tmp/ws_proxy_rotation_fail.png")
+                        logger.warning("🔄 Search input not found — screenshot saved")
+                    except Exception:
+                        pass
                     # Fallback: qualquer input visível que não seja hidden
                     all_inputs = page.locator("input:not([type='hidden'])")
                     count = await all_inputs.count()
                     if count == 0:
-                        raise Exception("no search input found")
+                        await page.keyboard.press("Escape")
+                        raise Exception("no search input found — dropdown may not have opened")
                     search_input = all_inputs.first
                     await search_input.wait_for(state="visible", timeout=3000)
 
