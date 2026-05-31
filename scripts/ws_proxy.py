@@ -365,6 +365,7 @@ class TickProxy:
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
                     "--disable-gpu",
+                    "--remote-debugging-port=9222",
                 ],
                 proxy=self._build_proxy_config() if self._use_proxy else None,
             )
@@ -447,8 +448,8 @@ class TickProxy:
 
     async def _asset_rotation_loop(self, page):
         """Muda o ativo na interface a cada 60 segundos.
-        Usa múltiplas estratégias de seletores — classes CSS da Quotex mudam dinamicamente.
-        NUNCA usa navegação direta por URL — isso mata o WebSocket e força restart."""
+        Usa seletores validados via CDP contra a página real da Quotex.
+        Quotex usa React synthetic events — requer mouse.down/up nativo, não click()."""
         asset_index = 0
         while True:
             await asyncio.sleep(60)
@@ -460,74 +461,38 @@ class TickProxy:
                 name = asset.replace("_otc", "")
                 if len(name) == 6 and name.isalpha():
                     search_text = f"{name[:3]}/{name[3:]}"
-                elif "USD" in name and name != "USD":
-                    search_text = name.replace("USD", "/USD").replace("//", "/")
                 else:
                     search_text = name
 
-                # ── Abrir seletor de ativos ──
-                clicked = False
-                opener_selectors = [
-                    # Text-based (mais robustos — classes Quotex mudam)
-                    page.get_by_text("OTC", exact=False),
-                    page.locator("text=/[A-Z]{3}\s*/\s*[A-Z]{3}"),
-                    # Data attributes (se existirem)
-                    page.locator("[data-testid*='asset']").first,
-                    page.locator("[data-testid*='symbol']").first,
-                    # Class patterns (menos frágeis que nomes exatos)
-                    page.locator("[class*='asset']").first,
-                    page.locator("[class*='current']").first,
-                    page.locator("[class*='selected']").first,
-                    page.locator("[class*='symbol']").first,
-                    page.locator("[class*='instrument']").first,
-                    # Structural: qualquer div contendo SVG + texto de 6 letras
-                    page.locator("div:has(> svg) >> text=/[A-Z]{6}/"),
-                ]
-                for sel in opener_selectors:
-                    try:
-                        await sel.first.click(timeout=2000)
-                        clicked = True
-                        logger.info("🔄 Opened asset selector via: %s", sel)
-                        break
-                    except Exception:
-                        continue
-
-                if not clicked:
-                    logger.warning("🔄 Rotation: could not open asset selector — skipping cycle")
-                    continue
-
+                # 1. Abrir seletor de ativos — div.ApFHy contém o nome do ativo atual
+                await page.locator("div.ApFHy").first.click(timeout=3000)
                 await asyncio.sleep(1.5)
 
-                # ── Digitar termo de busca ──
-                typed = False
-                search_input_selectors = [
-                    page.locator("input[type='text']").first,
-                    page.locator("input[type='search']").first,
-                    page.locator("input:not([type='hidden'])").first,
-                ]
-                for inp in search_input_selectors:
-                    try:
-                        await inp.fill(search_text, timeout=2000)
-                        typed = True
-                        break
-                    except Exception:
-                        continue
+                # 2. Digitar termo de busca no campo Search
+                search_input = page.locator('input[placeholder="Search"]').first
+                await search_input.fill(search_text)
+                await asyncio.sleep(1)
 
-                if not typed:
-                    logger.warning("🔄 Rotation: could not type search for %s", search_text)
-                    # Press Escape to close dropdown if it opened
-                    try:
-                        await page.keyboard.press("Escape")
-                    except Exception:
-                        pass
+                # 3. Selecionar primeiro resultado com mouse events nativos
+                #    Quotex (React) captura mousedown/mouseup — Playwright click() não dispara handlers
+                result = page.locator("div.iT3nV").first
+                bbox = await result.bounding_box()
+                if not bbox:
+                    logger.warning("🔄 Rotation: result not found for %s", search_text)
+                    await page.keyboard.press("Escape")
                     continue
 
-                await asyncio.sleep(0.5)
+                x = bbox["x"] + bbox["width"] / 2
+                y = bbox["y"] + bbox["height"] / 2
+                await page.mouse.move(x, y)
+                await asyncio.sleep(0.1)
+                await page.mouse.down()
+                await asyncio.sleep(0.05)
+                await page.mouse.up()
 
-                # ── Clicar resultado ──
-                item = page.locator(f"text={search_text}").first
-                await item.click(timeout=5000)
-                logger.info("✅ Rotated to %s (%s)", asset, search_text)
+                await asyncio.sleep(1)
+                new_asset = await page.locator("div.l5ftG").first.inner_text()
+                logger.info("✅ Rotated to %s → %s", asset, new_asset.strip())
             except Exception as e:
                 logger.warning("Asset rotation failed for %s: %s", asset, str(e)[:120])
 
