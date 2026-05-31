@@ -495,9 +495,27 @@ class TickProxy:
                 await search_input.fill(search_text, timeout=5000)
                 await asyncio.sleep(1)
 
-                # 3. Selecionar resultado exato com mouse events nativos
-                #    Quotex (React) captura mousedown/mouseup — Playwright click() não dispara handlers
-                result = page.locator("div.iT3nV", has_text=search_text).first
+                # 3. Encontrar resultado exato iterando (has_text pode falhar com /)
+                results = page.locator("div.iT3nV")
+                count = await results.count()
+                if count == 0:
+                    await page.keyboard.press("Escape")
+                    raise Exception(f"no results for {search_text}")
+                # Encontra o div que contém o texto exato
+                found = None
+                for i in range(count):
+                    el = results.nth(i)
+                    try:
+                        txt = await el.inner_text()
+                        if search_text in txt:
+                            found = el
+                            break
+                    except Exception:
+                        continue
+                if not found:
+                    await page.keyboard.press("Escape")
+                    raise Exception(f"result with '{search_text}' not found in {count} items")
+                result = found
                 bbox = await result.bounding_box()
                 if not bbox:
                     logger.warning("🔄 Rotation: result not found for %s", search_text)
