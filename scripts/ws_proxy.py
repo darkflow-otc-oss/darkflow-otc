@@ -365,7 +365,6 @@ class TickProxy:
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
                     "--disable-gpu",
-                    "--remote-debugging-port=9222",
                 ],
                 proxy=self._build_proxy_config() if self._use_proxy else None,
             )
