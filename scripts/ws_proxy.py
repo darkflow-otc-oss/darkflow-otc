@@ -408,9 +408,10 @@ class TickProxy:
             # Start sentiment capture loop (every 10 seconds)
             sentiment_task = asyncio.create_task(self._sentiment_loop(page))
             logger.info("📊 Sentiment capture started")
-            # Start asset rotation loop (every 120 seconds)
-            rotation_task = asyncio.create_task(self._asset_rotation_loop(page))
-            logger.info("🔄 Asset rotation started")
+            # Rotation disabled — Quotex CSS classes change too often for reliable selectors
+            # rotation_task = asyncio.create_task(self._asset_rotation_loop(page))
+            # logger.info("🔄 Asset rotation started")
+            rotation_task = None
             # Initialize trade executor
             global _trade_executor
             _trade_executor = TradeExecutor(page)
@@ -458,7 +459,8 @@ class TickProxy:
 
                 await asyncio.sleep(1)
 
-            rotation_task.cancel()
+            if rotation_task:
+                rotation_task.cancel()
             await browser.close()
             # Kill Chrome subprocess
             try:
