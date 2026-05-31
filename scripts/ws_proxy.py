@@ -461,9 +461,21 @@ class TickProxy:
                 asset_index += 1
 
                 # Formata termo de busca: EURUSD_otc -> EUR/USD
+                # Crypto (BTC, ETH, etc.) -> usa nome legível (Bitcoin, Ethereum)
                 name = asset.replace("_otc", "")
+                CRYPTO_NAMES = {
+                    "BTC": "Bitcoin", "ETH": "Ethereum", "BCH": "Bitcoin Cash",
+                    "LTC": "Litecoin", "XRP": "Ripple", "SOL": "Solana",
+                    "ADA": "Cardano", "DOT": "Polkadot", "AVAX": "Avalanche",
+                    "MATIC": "Polygon", "LINK": "Chainlink", "UNI": "Uniswap",
+                    "ATOM": "Cosmos", "XMR": "Monero", "TRX": "Tron",
+                }
                 if len(name) == 6 and name.isalpha():
-                    search_text = f"{name[:3]}/{name[3:]}"
+                    base = name[:3]
+                    if base in CRYPTO_NAMES:
+                        search_text = CRYPTO_NAMES[base]  # "Bitcoin"
+                    else:
+                        search_text = f"{name[:3]}/{name[3:]}"  # "EUR/USD"
                 else:
                     search_text = name
 
