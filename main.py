@@ -492,6 +492,7 @@ async def _broadcast_consumer():
             if asset and price is not None:
                 last_price[asset] = float(price)
 
+            tick.setdefault("type", "tick")  # so dashboard counter increments
             await manager.broadcast(tick)
 
             signal = await signal_engine.process_tick(tick)
