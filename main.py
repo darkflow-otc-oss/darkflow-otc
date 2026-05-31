@@ -342,6 +342,8 @@ class SignalEngine:
 
         # Cooldown global por ativo: max 1 sinal a cada 10min
         if now - self._last_signal_ts < self._cooldown_secs:
+            remaining = int(self._cooldown_secs - (now - self._last_signal_ts))
+            logger.info("⏳ Cooldown: %s — próximo sinal em %ds", self.asset, remaining)
             return None
 
         self._last_signal_ts = now
@@ -351,6 +353,8 @@ class SignalEngine:
         # ── Quality Filter ── minimo 85% para todos os sinais
         raw_signal = result.get("signal", "")
         if confidence < 0.85:
+            if confidence >= 0.75:  # log near-misses only
+                logger.info("🔻 Below threshold: %s %s conf=%.2f%% (need 85%%)", self.asset, raw_signal, confidence * 100)
             return None
 
         # ── Trend Filter ──
