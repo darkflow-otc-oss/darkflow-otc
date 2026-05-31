@@ -357,8 +357,14 @@ class SignalEngine:
         trend_bias = self._compute_trend_bias()
         allow_counter = os.getenv("ALLOW_COUNTER_TREND", "false").lower() == "true"
         if trend_bias == "NEUTRAL":
-            logger.info("🛑 Trend NEUTRAL — sinal bloqueado (exige tendencia confirmada)")
-            return None
+            if raw_signal == "CALL":
+                logger.info("🛑 Trend NEUTRAL — COMPRA bloqueada (historical win rate 0%%)")
+                return None
+            # PUT (VENDA) in choppy market — allow only high-confidence reversals
+            if confidence < 0.90:
+                logger.info("🛑 Trend NEUTRAL — VENDA abaixo de 90%%, bloqueada")
+                return None
+            logger.info("⚠️ Trend NEUTRAL — VENDA liberada (confidence=%.2f%%)", confidence)
         if not allow_counter:
             if trend_bias == "DOWN" and raw_signal == "CALL":
                 logger.info(
