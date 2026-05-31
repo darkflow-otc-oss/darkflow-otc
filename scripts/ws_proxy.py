@@ -464,9 +464,17 @@ class TickProxy:
                 base = name[:3]
                 search_text = CRYPTO_DISPLAY.get(base, f"{name[:3]}/{name[3:]}")
 
-                # 1. Abrir seletor de ativos com force=True (bypass possíveis overlays)
-                await page.locator("div.ApFHy").first.click(timeout=5000, force=True)
-                # Aguardar dropdown abrir (animação React ~1-2s)
+                # 1. Abrir seletor — tenta click normal primeiro, depois coordenadas
+                opener = page.locator("div.ApFHy").first
+                try:
+                    await opener.click(timeout=3000)
+                except Exception:
+                    # Fallback: coordenadas com mouse nativo
+                    bbox = await opener.bounding_box()
+                    if bbox:
+                        x = bbox["x"] + bbox["width"] / 2
+                        y = bbox["y"] + bbox["height"] / 2
+                        await page.mouse.click(x, y)
                 await asyncio.sleep(2)
 
                 # 2. Aguardar campo de busca aparecer e digitar
