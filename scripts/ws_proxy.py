@@ -446,18 +446,15 @@ class TickProxy:
             await browser.close()
 
     async def _asset_rotation_loop(self, page):
-        """Muda o ativo na interface a cada 60 segundos."""
+        """Muda o ativo na interface a cada 60 segundos.
+        Usa múltiplas estratégias de seletores — classes CSS da Quotex mudam dinamicamente."""
         asset_index = 0
         while True:
             await asyncio.sleep(60)
             try:
                 asset = ASSETS[asset_index % len(ASSETS)]
                 asset_index += 1
-                # Clica no ativo atual para abrir o seletor
-                btn = await page.query_selector("div.h9gji") or await page.query_selector("div.ifu_i")
-                if btn:
-                    await btn.click()
-                    await asyncio.sleep(1.5)
+
                 # Formata termo de busca: EURUSD_otc -> EUR/USD
                 name = asset.replace("_otc", "")
                 if len(name) == 6 and name.isalpha():
@@ -466,12 +463,59 @@ class TickProxy:
                     search_text = name.replace("USD", "/USD").replace("//", "/")
                 else:
                     search_text = name
-                # Busca qualquer elemento visivel contendo o texto do ativo
+
+                # ── Estratégia 1: clicar no ativo atual (OTC badge) ──
+                clicked = False
+                opener_selectors = [
+                    page.get_by_text("OTC", exact=False),
+                    page.locator("text=/[A-Z]{3}/[A-Z]{3}"),
+                    page.locator("text=/[A-Z]{3}"),
+                    page.locator("[class*='asset']").first,
+                    page.locator("[class*='current']").first,
+                    page.locator("[class*='selected']").first,
+                    page.locator("[class*='symbol']").first,
+                    page.locator("[class*='instrument']").first,
+                ]
+                for sel in opener_selectors:
+                    try:
+                        await sel.first.click(timeout=2000)
+                        clicked = True
+                        break
+                    except Exception:
+                        continue
+
+                if not clicked:
+                    # ── Estratégia 2: navegação direta por URL ──
+                    target_url = f"https://qxbroker.com/en/trade/{asset}"
+                    logger.info("🔄 Rotating via URL: %s", target_url)
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(3)
+                    logger.info("✅ Rotated to %s via URL", asset)
+                    continue
+
+                await asyncio.sleep(1.5)
+
+                # ── Digitar termo de busca no campo de pesquisa ──
+                search_input_selectors = [
+                    page.locator("input[type='text']").first,
+                    page.locator("input[type='search']").first,
+                    page.locator("input:not([type='hidden'])").first,
+                ]
+                for inp in search_input_selectors:
+                    try:
+                        await inp.fill(search_text, timeout=2000)
+                        break
+                    except Exception:
+                        continue
+
+                await asyncio.sleep(0.5)
+
+                # ── Clicar no resultado ──
                 item = page.locator(f"text={search_text}").first
                 await item.click(timeout=5000)
                 logger.info("🔄 Rotated asset to %s (%s)", asset, search_text)
             except Exception as e:
-                logger.warning("Asset rotation failed for %s (search=%s): %s", asset, search_text, str(e)[:80])
+                logger.warning("Asset rotation failed for %s (search=%s): %s", asset, search_text if 'search_text' in dir() else '?', str(e)[:120])
 
 
 # ── Trade Executor (recebe ordens da API e executa na Quotex) ────────────
