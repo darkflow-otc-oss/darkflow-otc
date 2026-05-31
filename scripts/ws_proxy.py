@@ -450,8 +450,12 @@ class TickProxy:
         Usa seletores validados via CDP contra a página real da Quotex.
         Quotex usa React synthetic events — requer mouse.down/up nativo, não click()."""
         asset_index = 0
+        first_cycle = True
         while True:
-            await asyncio.sleep(60)
+            # Primeira rotação aguarda 90s (Quotex React demora para hidratar handlers)
+            # Rotações seguintes: 60s
+            await asyncio.sleep(90 if first_cycle else 60)
+            first_cycle = False
             try:
                 asset = ASSETS[asset_index % len(ASSETS)]
                 asset_index += 1
@@ -463,8 +467,8 @@ class TickProxy:
                 else:
                     search_text = name
 
-                # 1. Abrir seletor de ativos — div.ApFHy contém o nome do ativo atual
-                await page.locator("div.ApFHy").first.click(timeout=5000)
+                # 1. Abrir seletor de ativos com force=True (bypass possíveis overlays)
+                await page.locator("div.ApFHy").first.click(timeout=5000, force=True)
                 # Aguardar dropdown abrir (animação React ~1-2s)
                 await asyncio.sleep(2)
 
