@@ -25,17 +25,17 @@ from aiohttp import web
 PROXY_URL = "http://j3LUJ4ZiEaDJFBw2:SSeAXAcMPb7sfPv6_country-br_city-saopaulo_session-iqjDNG8n_lifetime-168h@geo.iproyal.com:12321"
 COOKIES_PATH = Path.home() / "darkflow_otc" / "data" / "session" / "cookies.json"
 API_URL = "http://localhost:8000/api/ingest/tick"
+# Crypto OTC pairs available in Quotex dropdown (verified via CDP — forex not in OTC)
 ASSETS = [
-    "BTCUSD_otc", "BCHUSD_otc", "ETHUSD_otc", "EURUSD_otc", "LTCUSD_otc",
-    "EURCAD_otc", "USDDZD_otc", "AUDJPY_otc", "USDCHF_otc", "USDCOP_otc",
-    "EURAUD_otc", "GBPJPY_otc", "GBPNZD_otc", "NZDUSD_otc", "AUDCHF_otc",
-    "AUDUSD_otc", "USDINR_otc", "USDCAD_otc", "USDPKR_otc", "GBPAUD_otc",
-    "GBPCAD_otc", "NZDCHF_otc", "USDARS_otc", "USDMXN_otc", "USDEGP_otc",
-    "AUDCAD_otc", "EURCHF_otc", "EURGBP_otc", "EURJPY_otc", "NZDCAD_otc",
-    "NZDJPY_otc", "USDBDT_otc", "USDIDR_otc", "USDJPY_otc", "USDNGN_otc",
-    "USDPHP_otc", "KRAUDNZD_otc", "CADCHF_otc", "GBPCHF_otc", "CADJPY_otc",
-    "USDZAR_otc", "GBPUSD_otc", "REURNZD_otc",
+    "BTCUSD_otc", "ETHUSD_otc", "BCHUSD_otc", "LTCUSD_otc",
+    "SOLUSD_otc", "XRPUSD_otc", "ADAUSD_otc", "DOTUSD_otc",
 ]
+# Quotex display names for crypto (search must match dropdown text)
+CRYPTO_DISPLAY = {
+    "BTC": "Bitcoin", "ETH": "Ethereum", "BCH": "Bitcoin Cash",
+    "LTC": "Litecoin", "SOL": "Solana", "XRP": "Ripple",
+    "ADA": "Cardano", "DOT": "Polkadot",
+}
 TARGET_URL = "https://qxbroker.com/en/trade"
 WS_FILTER = "ws2.qxbroker.com"
 INACTIVITY_TIMEOUT = 30
@@ -450,12 +450,8 @@ class TickProxy:
         Usa seletores validados via CDP contra a página real da Quotex.
         Quotex usa React synthetic events — requer mouse.down/up nativo, não click()."""
         asset_index = 0
-        first_cycle = True
         while True:
-            # Primeira rotação aguarda 90s (Quotex React demora para hidratar handlers)
-            # Rotações seguintes: 60s
-            await asyncio.sleep(90 if first_cycle else 60)
-            first_cycle = False
+            await asyncio.sleep(60)
             try:
                 asset = ASSETS[asset_index % len(ASSETS)]
                 asset_index += 1
@@ -463,21 +459,10 @@ class TickProxy:
                 # Formata termo de busca: EURUSD_otc -> EUR/USD
                 # Crypto (BTC, ETH, etc.) -> usa nome legível (Bitcoin, Ethereum)
                 name = asset.replace("_otc", "")
-                CRYPTO_NAMES = {
-                    "BTC": "Bitcoin", "ETH": "Ethereum", "BCH": "Bitcoin Cash",
-                    "LTC": "Litecoin", "XRP": "Ripple", "SOL": "Solana",
-                    "ADA": "Cardano", "DOT": "Polkadot", "AVAX": "Avalanche",
-                    "MATIC": "Polygon", "LINK": "Chainlink", "UNI": "Uniswap",
-                    "ATOM": "Cosmos", "XMR": "Monero", "TRX": "Tron",
-                }
-                if len(name) == 6 and name.isalpha():
-                    base = name[:3]
-                    if base in CRYPTO_NAMES:
-                        search_text = CRYPTO_NAMES[base]  # "Bitcoin"
-                    else:
-                        search_text = f"{name[:3]}/{name[3:]}"  # "EUR/USD"
-                else:
-                    search_text = name
+                # Crypto: usa nome legível (Quotex mostra "Bitcoin (OTC)", não "BTC/USD")
+                name = asset.replace("_otc", "")
+                base = name[:3]
+                search_text = CRYPTO_DISPLAY.get(base, f"{name[:3]}/{name[3:]}")
 
                 # 1. Abrir seletor de ativos com force=True (bypass possíveis overlays)
                 await page.locator("div.ApFHy").first.click(timeout=5000, force=True)
