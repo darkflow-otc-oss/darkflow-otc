@@ -356,18 +356,29 @@ class TickProxy:
         self.ws_connected = False
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=False,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-infobars",
-                    "--disable-gpu",
-                ],
-                proxy=self._build_proxy_config() if self._use_proxy else None,
+            # Launch Chrome as subprocess + connect via CDP WebSocket.
+            # Quotex React requires CDP over WebSocket (port 9222) — inline
+            # pipe-based CDP doesn't dispatch synthetic events that React catches.
+            chrome_path = p.chromium.executable_path
+            chrome_args = [
+                chrome_path,
+                "--remote-debugging-port=9222",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--disable-gpu",
+                "--user-data-dir=/tmp/darkflow_chrome",
+            ]
+            # Kill any previous instance on port 9222
+            subprocess.run(["fuser", "-k", "9222/tcp"], capture_output=True)
+            self._chrome_process = subprocess.Popen(
+                chrome_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
+            await asyncio.sleep(2)
+            browser = await p.chromium.connect_over_cdp("http://localhost:9222")
+            logger.info("🔗 Connected to Chrome via CDP (pid=%d)", self._chrome_process.pid)
 
             safe_cookies = self._sanitize_cookies(cookies)
 
@@ -412,6 +423,11 @@ class TickProxy:
             except Exception as e:
                 logger.error("Navigation failed: %s", e)
                 await browser.close()
+                try:
+                    self._chrome_process.kill()
+                    self._chrome_process.wait(timeout=5)
+                except Exception:
+                    pass
                 return
 
             # Wait for Cloudflare to clear
@@ -444,6 +460,12 @@ class TickProxy:
 
             rotation_task.cancel()
             await browser.close()
+            # Kill Chrome subprocess
+            try:
+                self._chrome_process.kill()
+                self._chrome_process.wait(timeout=5)
+            except Exception:
+                pass
 
     async def _asset_rotation_loop(self, page):
         """Muda o ativo na interface a cada 60 segundos.
