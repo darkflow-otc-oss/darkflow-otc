@@ -472,8 +472,11 @@ class TickProxy:
         Usa seletores validados via CDP contra a página real da Quotex.
         Quotex usa React synthetic events — requer mouse.down/up nativo, não click()."""
         asset_index = 0
+        first = True
         while True:
-            await asyncio.sleep(60)
+            # Primeira rotação espera 120s (Quotex React leva >60s para hidratar handlers)
+            await asyncio.sleep(120 if first else 60)
+            first = False
             try:
                 asset = ASSETS[asset_index % len(ASSETS)]
                 asset_index += 1
@@ -486,17 +489,10 @@ class TickProxy:
                 base = name[:3]
                 search_text = CRYPTO_DISPLAY.get(base, f"{name[:3]}/{name[3:]}")
 
-                # 1. Abrir seletor — tenta click normal primeiro, depois coordenadas
-                opener = page.locator("div.ApFHy").first
-                try:
-                    await opener.click(timeout=3000)
-                except Exception:
-                    # Fallback: coordenadas com mouse nativo
-                    bbox = await opener.bounding_box()
-                    if bbox:
-                        x = bbox["x"] + bbox["width"] / 2
-                        y = bbox["y"] + bbox["height"] / 2
-                        await page.mouse.click(x, y)
+                # 1. Abrir seletor — dispara MouseEvent nativo via JS (React reconhece)
+                await page.locator("div.ApFHy").first.evaluate(
+                    "el => el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}))"
+                )
                 await asyncio.sleep(2)
 
                 # 2. Aguardar campo de busca aparecer e digitar
