@@ -491,9 +491,9 @@ class TickProxy:
                 await search_input.fill(search_text, timeout=5000)
                 await asyncio.sleep(1)
 
-                # 3. Selecionar primeiro resultado com mouse events nativos
+                # 3. Selecionar resultado exato com mouse events nativos
                 #    Quotex (React) captura mousedown/mouseup — Playwright click() não dispara handlers
-                result = page.locator("div.iT3nV").first
+                result = page.locator("div.iT3nV", has_text=search_text).first
                 bbox = await result.bounding_box()
                 if not bbox:
                     logger.warning("🔄 Rotation: result not found for %s", search_text)
