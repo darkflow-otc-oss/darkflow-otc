@@ -464,12 +464,24 @@ class TickProxy:
                     search_text = name
 
                 # 1. Abrir seletor de ativos — div.ApFHy contém o nome do ativo atual
-                await page.locator("div.ApFHy").first.click(timeout=3000)
-                await asyncio.sleep(1.5)
+                await page.locator("div.ApFHy").first.click(timeout=5000)
+                # Aguardar dropdown abrir (animação React ~1-2s)
+                await asyncio.sleep(2)
 
-                # 2. Digitar termo de busca no campo Search
-                search_input = page.locator('input[placeholder="Search"]').first
-                await search_input.fill(search_text)
+                # 2. Aguardar campo de busca aparecer e digitar
+                try:
+                    search_input = page.locator('input[placeholder="Search"]').first
+                    await search_input.wait_for(state="visible", timeout=5000)
+                except Exception:
+                    # Fallback: qualquer input visível que não seja hidden
+                    all_inputs = page.locator("input:not([type='hidden'])")
+                    count = await all_inputs.count()
+                    if count == 0:
+                        raise Exception("no search input found")
+                    search_input = all_inputs.first
+                    await search_input.wait_for(state="visible", timeout=3000)
+
+                await search_input.fill(search_text, timeout=5000)
                 await asyncio.sleep(1)
 
                 # 3. Selecionar primeiro resultado com mouse events nativos
