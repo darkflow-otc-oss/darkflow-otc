@@ -503,6 +503,11 @@ async def _broadcast_consumer():
 
             signal = await signal_engine.process_tick(tick)
             if signal:
+                logger.info(
+                    "🚀 SIGNAL: %s %s on %s (conf=%.2f%% pattern=%s)",
+                    signal.get("action"), signal.get("type"), signal.get("asset"),
+                    signal.get("confidence", 0) * 100, signal.get("pattern"),
+                )
                 manager.last_signal = signal
                 await manager.broadcast(signal)
 
