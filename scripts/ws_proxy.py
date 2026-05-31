@@ -489,7 +489,10 @@ class TickProxy:
                     target_url = f"https://qxbroker.com/en/trade/{asset}"
                     logger.info("🔄 Rotating via URL: %s", target_url)
                     await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
-                    await asyncio.sleep(3)
+                    # Reset inactivity timer — page reload kills WS, needs fresh 45s window
+                    self.last_tick_time = time.monotonic()
+                    self.ws_connected = False
+                    await asyncio.sleep(5)
                     logger.info("✅ Rotated to %s via URL", asset)
                     continue
 
